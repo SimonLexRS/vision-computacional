@@ -1,0 +1,79 @@
+{
+  "generation_config": {
+    "total_images": 15000,
+    "image_size": [
+      256,
+      256
+    ],
+    "classes": [
+      "normal",
+      "scratch",
+      "crack",
+      "rust",
+      "hole"
+    ],
+    "train_ratio": 0.8,
+    "master_seed": 42
+  },
+  "class_distribution": {
+    "normal": {
+      "train": 2400,
+      "val": 600,
+      "total": 3000
+    },
+    "scratch": {
+      "train": 2400,
+      "val": 600,
+      "total": 3000
+    },
+    "crack": {
+      "train": 2400,
+      "val": 600,
+      "total": 3000
+    },
+    "rust": {
+      "train": 2400,
+      "val": 600,
+      "total": 3000
+    },
+    "hole": {
+      "train": 2400,
+      "val": 600,
+      "total": 3000
+    }
+  },
+  "generation_statistics": {
+    "total_images": 15000,
+    "total_generation_time_seconds": 451.38,
+    "images_per_second": 33.23,
+    "start_time": "2026-02-20T12:58:25.451727",
+    "end_time": "2026-02-20T13:05:56.828844"
+  },
+  "validation_results": {
+    "balance_report": {
+      "train_counts": {
+        "normal": 2400,
+        "scratch": 2400,
+        "crack": 2400,
+        "rust": 2400,
+        "hole": 2400
+      },
+      "val_counts": {
+        "normal": 600,
+        "scratch": 600,
+        "crack": 600,
+        "rust": 600,
+        "hole": 600
+      },
+      "total_train": 12000,
+      "total_val": 3000,
+      "balance_ok": true,
+      "issues": []
+    },
+    "post_generation": {
+      "all_files_readable": true,
+      "file_count_correct": true,
+      "issues": []
+    }
+  }
+}
