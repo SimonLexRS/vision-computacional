@@ -11,3 +11,4 @@ Thumbs.db
 *.log
 outputs/
 .ipynb_checkpoints/
+# docs/figures/ se versiona (gráficos del README)
