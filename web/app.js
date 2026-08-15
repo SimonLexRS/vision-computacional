@@ -64,9 +64,9 @@ let fpsWindowStart = performance.now();
 // predicción en vivo (evita parpadeo entre clases frame a frame).
 let smoothProbs = null;
 const SMOOTHING = 0.4;
-// Modo multi: una EMA por celda de la cuadrícula.
+// Modo seguimiento: tracks activos con EMA por clase (estado en la
+// sección de seguimiento, más abajo).
 let multiMode = false;
-let smoothGrid = null;
 
 // Ajusta el marco de "zona de análisis" al cuadrado central del
 // wrapper (es exactamente la región que recorta el preprocesamiento).
@@ -220,94 +220,300 @@ function tickFps() {
   }
 }
 
-// --- Detección múltiple: cuadrícula de regiones clasificadas en batch ---
-// 3×3 en escritorio; 2×2 cuando el panel es angosto (móvil).
-function gridDims() {
-  const small = videoWrapper.clientWidth < 480;
-  return small ? { rows: 2, cols: 2 } : { rows: 3, cols: 3 };
+// --- Seguimiento de objetos: regiones dinámicas + CNN + tracker ---
+// El modelo es un clasificador, no un detector: las regiones candidatas
+// se proponen por saliencia visual (gradiente local: textura/bordes) y
+// movimiento (diferencia contra el frame anterior), cada una se
+// clasifica con la CNN en un solo batch, y un tracker las sigue frame a
+// frame con suavizado exponencial, como haría el ojo humano.
+const ANALYSIS_WIDTH = 192;
+const analysisCanvas = document.createElement("canvas");
+const analysisCtx = analysisCanvas.getContext("2d", { willReadFrequently: true });
+let prevGray = null; // frame anterior en baja resolución (movimiento)
+let tracks = [];
+let nextTrackId = 1;
+const TRACK_ALPHA = 0.4; // suavizado de la caja que sigue al objeto
+const TRACK_MAX_MISSED = 3; // ticks sin match antes de soltar el track
+
+// Detecta regiones salientes/en movimiento. Devuelve cajas cuadradas
+// { sx, sy, side } en coordenadas del video.
+function detectRegions(vw, vh) {
+  const aw = ANALYSIS_WIDTH;
+  const ah = Math.max(1, Math.round((ANALYSIS_WIDTH * vh) / vw));
+  if (analysisCanvas.width !== aw || analysisCanvas.height !== ah) {
+    analysisCanvas.width = aw;
+    analysisCanvas.height = ah;
+    prevGray = null;
+  }
+  analysisCtx.drawImage(video, 0, 0, aw, ah);
+  const { data } = analysisCtx.getImageData(0, 0, aw, ah);
+
+  // Escala de grises.
+  const gray = new Float32Array(aw * ah);
+  for (let i = 0; i < aw * ah; i++) {
+    gray[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+  }
+
+  // Energía = gradiente local + movimiento contra el frame anterior.
+  const energy = new Float32Array(aw * ah);
+  for (let y = 1; y < ah - 1; y++) {
+    for (let x = 1; x < aw - 1; x++) {
+      const i = y * aw + x;
+      let e = Math.abs(gray[i + 1] - gray[i - 1]) + Math.abs(gray[i + aw] - gray[i - aw]);
+      if (prevGray) e += 2 * Math.abs(gray[i] - prevGray[i]);
+      energy[i] = e;
+    }
+  }
+  prevGray = gray;
+
+  // Suavizado 5×5 del mapa de energía: los bordes finos (anillos) se
+  // convierten en regiones gruesas detectables por área.
+  const blurred = new Float32Array(aw * ah);
+  for (let y = 0; y < ah; y++) {
+    for (let x = 0; x < aw; x++) {
+      let s = 0;
+      let cnt = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || nx >= aw || ny < 0 || ny >= ah) continue;
+          s += energy[ny * aw + nx];
+          cnt++;
+        }
+      }
+      blurred[y * aw + x] = s / cnt;
+    }
+  }
+
+  // Umbral adaptativo: media + 1 desviación estándar.
+  let sum = 0;
+  let sum2 = 0;
+  for (let i = 0; i < blurred.length; i++) {
+    sum += blurred[i];
+    sum2 += blurred[i] * blurred[i];
+  }
+  const mean = sum / blurred.length;
+  const std = Math.sqrt(Math.max(0, sum2 / blurred.length - mean * mean));
+  const threshold = mean + std;
+
+  // Máscara binaria + dilatación 3×3 para cerrar huecos.
+  const raw = new Uint8Array(aw * ah);
+  let any = false;
+  for (let i = 0; i < blurred.length; i++) {
+    if (blurred[i] > threshold) {
+      raw[i] = 1;
+      any = true;
+    }
+  }
+  if (!any) return [];
+  const mask = new Uint8Array(aw * ah);
+  for (let y = 0; y < ah; y++) {
+    for (let x = 0; x < aw; x++) {
+      if (!raw[y * aw + x]) continue;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && nx < aw && ny >= 0 && ny < ah) mask[ny * aw + nx] = 1;
+        }
+      }
+    }
+  }
+
+  // Componentes conexas (BFS 4-conectado) → caja por región.
+  const labels = new Int32Array(aw * ah).fill(-1);
+  const queue = new Int32Array(aw * ah);
+  const boxes = [];
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || labels[start] >= 0) continue;
+    const id = boxes.length;
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = start;
+    labels[start] = id;
+    let minX = aw;
+    let maxX = 0;
+    let minY = ah;
+    let maxY = 0;
+    let count = 0;
+    while (head < tail) {
+      const p = queue[head++];
+      const px = p % aw;
+      const py = (p / aw) | 0;
+      count++;
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (py < minY) minY = py;
+      if (py > maxY) maxY = py;
+      if (px > 0 && mask[p - 1] && labels[p - 1] < 0) { labels[p - 1] = id; queue[tail++] = p - 1; }
+      if (px < aw - 1 && mask[p + 1] && labels[p + 1] < 0) { labels[p + 1] = id; queue[tail++] = p + 1; }
+      if (py > 0 && mask[p - aw] && labels[p - aw] < 0) { labels[p - aw] = id; queue[tail++] = p - aw; }
+      if (py < ah - 1 && mask[p + aw] && labels[p + aw] < 0) { labels[p + aw] = id; queue[tail++] = p + aw; }
+    }
+    boxes.push({ minX, maxX, minY, maxY, area: count });
+  }
+
+  // Filtrar por área mínima (~1.5% del frame), expandir 30% y hacer
+  // cuadradas; en pantallas angostas se siguen menos objetos.
+  const minArea = aw * ah * 0.015;
+  const maxBoxes = videoWrapper.clientWidth < 480 ? 3 : 5;
+  const scaleX = vw / aw;
+  const scaleY = vh / ah;
+  return boxes
+    .filter((b) => b.area >= minArea)
+    .sort((a, b) => b.area - a.area)
+    .slice(0, maxBoxes)
+    .map((b) => {
+      const w = (b.maxX - b.minX + 1) * scaleX * 1.3;
+      const h = (b.maxY - b.minY + 1) * scaleY * 1.3;
+      const cx = ((b.minX + b.maxX + 1) / 2) * scaleX;
+      const cy = ((b.minY + b.maxY + 1) / 2) * scaleY;
+      const side = Math.min(Math.max(w, h), Math.min(vw, vh));
+      const sx = Math.min(Math.max(cx - side / 2, 0), vw - side);
+      const sy = Math.min(Math.max(cy - side / 2, 0), vh - side);
+      return { sx, sy, side };
+    });
 }
 
-async function runMultiInference() {
+function boxIou(a, b) {
+  const x1 = Math.max(a.sx, b.sx);
+  const y1 = Math.max(a.sy, b.sy);
+  const x2 = Math.min(a.sx + a.side, b.sx + b.side);
+  const y2 = Math.min(a.sy + a.side, b.sy + b.side);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const union = a.side * a.side + b.side * b.side - inter;
+  return union > 0 ? inter / union : 0;
+}
+
+// Asocia detecciones a tracks existentes (IoU o cercanía de centroides)
+// y suaviza la caja: la etiqueta sigue al objeto sin saltos bruscos.
+function updateTracks(detections, vw, vh) {
+  const maxDist = Math.hypot(vw, vh) * 0.2;
+  const used = new Set();
+
+  for (const track of tracks) {
+    let best = -1;
+    let bestIou = 0.2; // umbral mínimo de solapamiento
+    detections.forEach((det, i) => {
+      if (used.has(i)) return;
+      const ov = boxIou(track.box, det);
+      if (ov > bestIou) {
+        bestIou = ov;
+        best = i;
+      }
+    });
+    if (best < 0) {
+      // Sin solapamiento: match por distancia de centroides.
+      const tcx = track.box.sx + track.box.side / 2;
+      const tcy = track.box.sy + track.box.side / 2;
+      let bestD = maxDist;
+      detections.forEach((det, i) => {
+        if (used.has(i)) return;
+        const d = Math.hypot(det.sx + det.side / 2 - tcx, det.sy + det.side / 2 - tcy);
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      });
+    }
+    if (best >= 0) {
+      used.add(best);
+      const det = detections[best];
+      track.box = {
+        sx: TRACK_ALPHA * det.sx + (1 - TRACK_ALPHA) * track.box.sx,
+        sy: TRACK_ALPHA * det.sy + (1 - TRACK_ALPHA) * track.box.sy,
+        side: TRACK_ALPHA * det.side + (1 - TRACK_ALPHA) * track.box.side,
+      };
+      track.missed = 0;
+      track.detIndex = best;
+    } else {
+      track.missed++;
+      track.detIndex = -1;
+    }
+  }
+
+  // Detecciones sin match → tracks nuevos.
+  detections.forEach((det, i) => {
+    if (used.has(i)) return;
+    tracks.push({ id: nextTrackId++, box: { ...det }, probs: null, missed: 0, detIndex: i });
+  });
+
+  tracks = tracks.filter((t) => t.missed <= TRACK_MAX_MISSED);
+}
+
+async function runTrackingInference() {
   if (!session || inferenceInFlight || !cameraStream) return;
   inferenceInFlight = true;
 
   try {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
-    const { rows, cols } = gridDims();
-    const n = rows * cols;
-    const plane = IMG_SIZE * IMG_SIZE;
-    const batch = new Float32Array(n * 3 * plane);
-    const cells = [];
+    const detections = detectRegions(vw, vh);
+    updateTracks(detections, vw, vh);
 
-    let k = 0;
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        // Cuadrado centrado dentro de cada celda de la cuadrícula.
-        const cw = vw / cols;
-        const ch = vh / rows;
-        const side = Math.min(cw, ch);
-        const sx = c * cw + (cw - side) / 2;
-        const sy = r * ch + (ch - side) / 2;
-        pixelsToTensor(drawRegionToCanvas(video, sx, sy, side), batch, k * 3 * plane);
-        cells.push({ sx, sy, side });
-        k++;
+    // Clasificar las regiones detectadas en un solo batch.
+    let latency = 0;
+    if (detections.length > 0) {
+      const n = detections.length;
+      const plane = IMG_SIZE * IMG_SIZE;
+      const batch = new Float32Array(n * 3 * plane);
+      detections.forEach((det, i) => {
+        pixelsToTensor(drawRegionToCanvas(video, det.sx, det.sy, det.side), batch, i * 3 * plane);
+      });
+
+      const input = new ort.Tensor("float32", batch, [n, 3, IMG_SIZE, IMG_SIZE]);
+      const t0 = performance.now();
+      const output = await session.run({ input });
+      latency = performance.now() - t0;
+
+      const logits = output.logits.data;
+      for (const track of tracks) {
+        if (track.detIndex < 0) continue;
+        const off = track.detIndex * CLASS_NAMES.length;
+        const probs = softmax(Array.from(logits.slice(off, off + CLASS_NAMES.length)));
+        track.probs = track.probs
+          ? probs.map((p, j) => SMOOTHING * p + (1 - SMOOTHING) * track.probs[j])
+          : probs;
       }
     }
 
-    const input = new ort.Tensor("float32", batch, [n, 3, IMG_SIZE, IMG_SIZE]);
-    const t0 = performance.now();
-    const output = await session.run({ input });
-    const latency = performance.now() - t0;
+    drawTracks();
 
-    const logits = output.logits.data;
-    if (!smoothGrid || smoothGrid.length !== n) {
-      smoothGrid = Array.from({ length: n }, () => null);
+    // Barras: promedio de los tracks activos. Chip: el más confiado.
+    const withProbs = tracks.filter((t) => t.probs);
+    if (withProbs.length > 0) {
+      const avg = CLASS_NAMES.map((_, j) => withProbs.reduce((a, t) => a + t.probs[j], 0) / withProbs.length);
+      updateBars(avg);
+      let best = withProbs[0];
+      withProbs.forEach((t) => {
+        if (Math.max(...t.probs) > Math.max(...best.probs)) best = t;
+      });
+      const bestIdx = best.probs.indexOf(Math.max(...best.probs));
+      const bestName = CLASS_NAMES[bestIdx];
+      chip.hidden = false;
+      chipClass.textContent = CLASS_LABELS[bestName];
+      chipClass.style.color = `var(--${bestName})`;
+      chipConf.textContent = `${(best.probs[bestIdx] * 100).toFixed(1)}%`;
+    } else {
+      chip.hidden = true;
     }
-    const results = [];
-    for (let i = 0; i < n; i++) {
-      const probs = softmax(Array.from(logits.slice(i * CLASS_NAMES.length, (i + 1) * CLASS_NAMES.length)));
-      smoothGrid[i] = smoothGrid[i]
-        ? probs.map((p, j) => SMOOTHING * p + (1 - SMOOTHING) * smoothGrid[i][j])
-        : probs;
-      results.push(smoothGrid[i]);
-    }
 
-    drawDetections(cells, results, vw, vh);
-
-    // Barras: promedio de las regiones. Chip: la detección más confiada.
-    const avg = CLASS_NAMES.map((_, j) => results.reduce((a, p) => a + p[j], 0) / n);
-    updateBars(avg);
-
-    let bestCell = 0;
-    let bestConf = 0;
-    results.forEach((p, i) => {
-      const m = Math.max(...p);
-      if (m > bestConf) {
-        bestConf = m;
-        bestCell = i;
-      }
-    });
-    const bestIdx = results[bestCell].indexOf(bestConf);
-    const bestName = CLASS_NAMES[bestIdx];
-    chip.hidden = false;
-    chipClass.textContent = CLASS_LABELS[bestName];
-    chipClass.style.color = `var(--${bestName})`;
-    chipConf.textContent = `${(bestConf * 100).toFixed(1)}%`;
-
-    latencyEl.textContent = `Inferencia: ${latency.toFixed(0)} ms (${n} regiones)`;
+    latencyEl.textContent = detections.length
+      ? `Inferencia: ${latency.toFixed(0)} ms (${tracks.length} objeto${tracks.length === 1 ? "" : "s"})`
+      : "Buscando objetos…";
     tickFps();
   } catch (err) {
-    console.error("Error en la inferencia múltiple:", err);
+    console.error("Error en el seguimiento:", err);
     statusEl.textContent = "Error en la inferencia: " + err.message;
   } finally {
     inferenceInFlight = false;
   }
 }
 
-// Dibuja las cajas etiquetadas sobre el overlay (coordenadas de video
-// escaladas al tamaño del wrapper).
-function drawDetections(cells, results, vw, vh) {
+// Dibuja las cajas de los tracks sobre el overlay (coordenadas de
+// video escaladas al tamaño del wrapper).
+function drawTracks() {
   const w = videoWrapper.clientWidth;
   const h = videoWrapper.clientHeight;
   if (overlay.width !== w || overlay.height !== h) {
@@ -316,39 +522,42 @@ function drawDetections(cells, results, vw, vh) {
   }
   const ctx = overlay.getContext("2d");
   ctx.clearRect(0, 0, w, h);
+  const vw = video.videoWidth || 1;
+  const vh = video.videoHeight || 1;
   const scaleX = w / vw;
   const scaleY = h / vh;
   const fontSize = Math.max(11, Math.round(w / 70));
   ctx.font = `600 ${fontSize}px "Segoe UI", system-ui, sans-serif`;
 
-  cells.forEach((cell, i) => {
-    const probs = results[i];
-    const bestIdx = probs.indexOf(Math.max(...probs));
+  for (const track of tracks) {
+    if (!track.probs) continue;
+    const bestIdx = track.probs.indexOf(Math.max(...track.probs));
     const name = CLASS_NAMES[bestIdx];
     const color = CLASS_COLORS[name];
-    const x = cell.sx * scaleX;
-    const y = cell.sy * scaleY;
-    const s = cell.side * scaleX;
+    const x = track.box.sx * scaleX;
+    const y = track.box.sy * scaleY;
+    const s = track.box.side * scaleX;
 
     ctx.lineWidth = 2;
     ctx.strokeStyle = color;
     ctx.strokeRect(x, y, s, s);
 
-    const label = `${CLASS_LABELS[name]} ${(probs[bestIdx] * 100).toFixed(0)}%`;
+    const label = `${CLASS_LABELS[name]} ${(track.probs[bestIdx] * 100).toFixed(0)}%`;
     const labelH = fontSize + 8;
     ctx.fillStyle = "rgba(10, 14, 24, 0.82)";
     ctx.fillRect(x, y, ctx.measureText(label).width + 12, labelH);
     ctx.fillStyle = color;
     ctx.fillText(label, x + 6, y + labelH - 7);
-  });
+  }
 }
 
 function setMultiMode(on) {
   multiMode = on && !!cameraStream;
   btnMulti.disabled = !cameraStream;
   btnMulti.classList.toggle("active", multiMode);
-  btnMulti.textContent = multiMode ? "Detección simple" : "Detección múltiple";
-  smoothGrid = null;
+  btnMulti.textContent = multiMode ? "Detección simple" : "Seguimiento de objetos";
+  tracks = [];
+  prevGray = null;
   if (!cameraStream) return;
 
   clearInterval(inferenceTimer);
@@ -356,7 +565,7 @@ function setMultiMode(on) {
     roiGuide.hidden = true;
     overlay.hidden = false; // el overlay pasa a ser la capa de cajas
     inferenceTimer = setInterval(() => {
-      if (video.readyState >= 2) runMultiInference();
+      if (video.readyState >= 2) runTrackingInference();
     }, MULTI_INFERENCE_INTERVAL_MS);
   } else {
     const ctx = overlay.getContext("2d");
@@ -436,12 +645,13 @@ function stopCamera() {
     cameraStream.getTracks().forEach((t) => t.stop());
     cameraStream = null;
   }
-  // Reset del modo multi (requiere cámara activa).
+  // Reset del modo seguimiento (requiere cámara activa).
   multiMode = false;
-  smoothGrid = null;
+  tracks = [];
+  prevGray = null;
   btnMulti.disabled = true;
   btnMulti.classList.remove("active");
-  btnMulti.textContent = "Detección múltiple";
+  btnMulti.textContent = "Seguimiento de objetos";
   video.srcObject = null;
   placeholder.style.display = "flex";
   chip.hidden = true;
