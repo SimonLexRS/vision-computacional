@@ -34,7 +34,7 @@ pip install -r requirements.txt
 jupyter notebook entrenar_modelos.ipynb
 ```
 
-Requisitos: Python 3.12+, PyTorch con CUDA. Por defecto el notebook usa GPU (`DEVICE_MODE = "cuda"` en la sección de configuración; puede cambiarse a `"auto"` o `"cpu"`).
+Requisitos: Python 3.12+, PyTorch con CUDA. Por defecto el notebook usa GPU (`DEVICE_MODE = "cuda"` en la sección de configuración; puede cambiarse a `"auto"`, `"cpu"` o `"mps"`).
 
 Estructura relevante:
 
