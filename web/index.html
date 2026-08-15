@@ -17,7 +17,7 @@
   </header>
 
   <main class="layout">
-    <section class="panel camera-panel">
+    <section class="panel camera-panel" id="camera-panel">
       <div class="video-wrapper" id="video-wrapper">
         <video id="video" playsinline muted></video>
         <canvas id="overlay" width="256" height="256" hidden></canvas>
@@ -34,6 +34,8 @@
 
       <div class="controls">
         <button id="btn-camera" class="btn btn-primary">Activar cámara</button>
+        <button id="btn-multi" class="btn btn-secondary" disabled>Detección múltiple</button>
+        <button id="btn-fullscreen" class="btn btn-secondary">Pantalla completa</button>
         <label class="btn btn-secondary">
           Subir imagen
           <input type="file" id="file-input" accept="image/*" hidden />
