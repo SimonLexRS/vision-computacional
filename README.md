@@ -79,6 +79,21 @@ python src/export_onnx.py --checkpoint outputs/checkpoints/mobilenet_v3_small_be
     --salida web/model.onnx
 ```
 
+### Edge detection en vivo (OpenCV, sin clasificación)
+
+Script independiente (`src/edge_detection.py`) que muestra **solo los bordes** del stream de la cámara — sin bounding boxes ni etiquetas. Usa el enfoque clásico **Canny** (grises → desenfoque gaussiano → Canny): corre en CPU a >30 FPS sin descargar modelos. Para migrar a una red (HED/DexiNed) basta reemplazar la función `detect_edges()`.
+
+```bash
+pip install -r requirements.txt          # incluye opencv-python
+python src/edge_detection.py             # webcam 0, bordes en verde sobre la imagen
+python src/edge_detection.py --mode map  # mapa de bordes blanco/negro
+python src/edge_detection.py --source "rtsp://usuario:pass@ip/..."  # cámara IP
+python src/edge_detection.py --save salida.mp4                      # grabar salida
+python src/edge_detection.py --selftest  # sin cámara: prueba con una imagen de test
+```
+
+Ajuste de parámetros: `--t1`/`--t2` (umbrales de Canny, defaults 60/160 — súbelos si hay bordes de ruido, bájalos si se pierden bordes tenues) y `--blur` (kernel gaussiano, default 5 — más alto = menos ruido, bordes más gruesos). En vivo: `m` alterna overlay/mapa, `+`/`-` ajustan `t1`, `q`/ESC sale.
+
 > **Pesos entrenados:** los `.pt` no están versionados (carpeta `outputs/` en `.gitignore`).
 > Para obtenerlos sin reentrenar: <!-- TODO(equipo): subir mobilenet_v3_small_best.pt a Drive/HF y pegar la URL -->
 > `gdown <URL_DEL_MODELO> -O outputs/checkpoints/mobilenet_v3_small_best.pt`.
@@ -98,6 +113,7 @@ Estructura relevante:
 │   ├── evaluate.py              # métricas sobre test/ o val/
 │   ├── predict.py               # inferencia sobre imagen o carpeta (CPU)
 │   ├── export_onnx.py           # exporta a ONNX para la demo web
+│   ├── edge_detection.py        # edge detection en vivo (Canny, OpenCV)
 │   └── common.py                # arquitecturas, transforms y utilidades compartidas
 ├── web/                         # demo web estática (GitHub Pages + ONNX Runtime Web)
 ├── docs/figures/                # gráficos del experimento (curvas, matrices de confusión)

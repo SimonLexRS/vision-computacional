@@ -19,3 +19,5 @@ ipykernel==7.3.0
 onnx==1.22.0
 onnxruntime==1.28.0
 onnxscript==0.7.1
+# Edge detection en vivo con cámara (src/edge_detection.py)
+opencv-python==4.12.0.88
