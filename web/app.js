@@ -77,9 +77,9 @@ function updateBars(probs) {
 async function loadModel() {
   try {
     // ONNX Runtime Web auto-hospedado en vendor/ort/ (sin CDN).
-    // Se usa URL absoluta: el loader jsep se importa como módulo ES y
+    // Se usa document.baseURI: el loader jsep se importa como módulo ES y
     // las rutas relativas se resolverían contra la carpeta del bundle.
-    ort.env.wasm.wasmPaths = new URL("vendor/ort/", location.href).href;
+    ort.env.wasm.wasmPaths = new URL("vendor/ort/", document.baseURI).href;
     session = await ort.InferenceSession.create("model.onnx", {
       executionProviders: ["wasm"],
     });
