@@ -195,9 +195,11 @@ def main():
         datos / "val", transform=make_eval_transform(args.img_size)
     )
 
-    assert train_ds.classes == val_ds.classes, (
-        "Las clases de train y val no coinciden."
-    )
+    if train_ds.classes != val_ds.classes:
+        raise SystemExit(
+            f"Las clases de train y val no coinciden: "
+            f"{train_ds.classes} vs {val_ds.classes}"
+        )
     class_names = train_ds.classes
 
     print(f"Clases: {class_names}")

@@ -42,6 +42,7 @@ const preprocessCtx = preprocessCanvas.getContext("2d", { willReadFrequently: tr
 let session = null;
 let cameraStream = null;
 let inferenceTimer = null;
+let inferenceInFlight = false;
 let frameCount = 0;
 let fpsWindowStart = performance.now();
 
@@ -75,8 +76,10 @@ function updateBars(probs) {
 // --- Carga del modelo ONNX ---
 async function loadModel() {
   try {
-    ort.env.wasm.wasmPaths =
-      "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
+    // ONNX Runtime Web auto-hospedado en vendor/ort/ (sin CDN).
+    // Se usa URL absoluta: el loader jsep se importa como módulo ES y
+    // las rutas relativas se resolverían contra la carpeta del bundle.
+    ort.env.wasm.wasmPaths = new URL("vendor/ort/", location.href).href;
     session = await ort.InferenceSession.create("model.onnx", {
       executionProviders: ["wasm"],
     });
@@ -129,32 +132,42 @@ function softmax(logits) {
 
 // --- Inferencia ---
 async function runInference(source, srcWidth, srcHeight) {
-  if (!session) return;
+  // Guard anti-solapamiento: si la inferencia anterior no terminó,
+  // se omite este tick (evita ejecuciones concurrentes acumuladas).
+  if (!session || inferenceInFlight) return;
+  inferenceInFlight = true;
 
-  const input = preprocess(source, srcWidth, srcHeight);
+  try {
+    const input = preprocess(source, srcWidth, srcHeight);
 
-  const t0 = performance.now();
-  const output = await session.run({ input });
-  const latency = performance.now() - t0;
+    const t0 = performance.now();
+    const output = await session.run({ input });
+    const latency = performance.now() - t0;
 
-  const probs = softmax(Array.from(output.logits.data));
-  const bestIdx = probs.indexOf(Math.max(...probs));
-  const bestName = CLASS_NAMES[bestIdx];
+    const probs = softmax(Array.from(output.logits.data));
+    const bestIdx = probs.indexOf(Math.max(...probs));
+    const bestName = CLASS_NAMES[bestIdx];
 
-  chip.hidden = false;
-  chipClass.textContent = CLASS_LABELS[bestName];
-  chipClass.style.color = `var(--${bestName})`;
-  chipConf.textContent = `${(probs[bestIdx] * 100).toFixed(1)}%`;
+    chip.hidden = false;
+    chipClass.textContent = CLASS_LABELS[bestName];
+    chipClass.style.color = `var(--${bestName})`;
+    chipConf.textContent = `${(probs[bestIdx] * 100).toFixed(1)}%`;
 
-  updateBars(probs);
-  latencyEl.textContent = `Inferencia: ${latency.toFixed(0)} ms`;
+    updateBars(probs);
+    latencyEl.textContent = `Inferencia: ${latency.toFixed(0)} ms`;
 
-  frameCount++;
-  const now = performance.now();
-  if (now - fpsWindowStart >= 1000) {
-    fpsEl.textContent = `FPS: ${((frameCount * 1000) / (now - fpsWindowStart)).toFixed(1)}`;
-    frameCount = 0;
-    fpsWindowStart = now;
+    frameCount++;
+    const now = performance.now();
+    if (now - fpsWindowStart >= 1000) {
+      fpsEl.textContent = `FPS: ${((frameCount * 1000) / (now - fpsWindowStart)).toFixed(1)}`;
+      frameCount = 0;
+      fpsWindowStart = now;
+    }
+  } catch (err) {
+    console.error("Error en la inferencia:", err);
+    statusEl.textContent = "Error en la inferencia: " + err.message;
+  } finally {
+    inferenceInFlight = false;
   }
 }
 

@@ -56,9 +56,11 @@ def main():
     ds = datasets.ImageFolder(
         split_dir, transform=make_eval_transform(args.img_size)
     )
-    assert ds.classes == class_names, (
-        f"Las clases de {split_dir} no coinciden con las del checkpoint."
-    )
+    if ds.classes != class_names:
+        raise SystemExit(
+            f"Las clases de {split_dir} ({ds.classes}) no coinciden "
+            f"con las del checkpoint ({class_names})."
+        )
 
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False)
 

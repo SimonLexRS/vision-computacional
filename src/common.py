@@ -155,8 +155,13 @@ class SimpleCNN(nn.Module):
         return x
 
 
-def build_model(name: str, num_classes: int = NUM_CLASSES) -> nn.Module:
-    """Construye un modelo del proyecto a partir de su nombre."""
+def build_model(name: str, num_classes: int = NUM_CLASSES, pretrained: bool = True) -> nn.Module:
+    """Construye un modelo del proyecto a partir de su nombre.
+
+    pretrained=True descarga los pesos ImageNet (para entrenar).
+    pretrained=False crea solo la arquitectura (para cargar un checkpoint,
+    que ya contiene todos los pesos — así no se descarga nada).
+    """
     name = name.lower()
 
     # CNN básica entrenada desde cero
@@ -165,18 +170,21 @@ def build_model(name: str, num_classes: int = NUM_CLASSES) -> nn.Module:
 
     # ResNet-18 preentrenada en ImageNet
     elif name == "resnet18":
-        model = models.resnet18(weights=ResNet18_Weights.DEFAULT)
+        weights = ResNet18_Weights.DEFAULT if pretrained else None
+        model = models.resnet18(weights=weights)
         model.fc = nn.Linear(model.fc.in_features, num_classes)
 
     # EfficientNet-B0 preentrenada en ImageNet
     elif name == "efficientnet_b0":
-        model = models.efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+        weights = EfficientNet_B0_Weights.DEFAULT if pretrained else None
+        model = models.efficientnet_b0(weights=weights)
         in_features = model.classifier[1].in_features
         model.classifier[1] = nn.Linear(in_features, num_classes)
 
     # MobileNetV3-Small preentrenada en ImageNet
     elif name == "mobilenet_v3_small":
-        model = models.mobilenet_v3_small(weights=MobileNet_V3_Small_Weights.DEFAULT)
+        weights = MobileNet_V3_Small_Weights.DEFAULT if pretrained else None
+        model = models.mobilenet_v3_small(weights=weights)
         in_features = model.classifier[3].in_features
         model.classifier[3] = nn.Linear(in_features, num_classes)
 
@@ -194,11 +202,17 @@ def load_checkpoint(checkpoint_path: str | Path, device: torch.device):
     """Carga un checkpoint guardado por train.py y devuelve el modelo listo.
 
     Usa map_location=device, por lo que un modelo entrenado en GPU se
-    puede cargar en CPU sin problema.
+    puede cargar en CPU sin problema. El load es seguro (weights_only=True:
+    el checkpoint solo contiene tensores y metadatos simples) y no descarga
+    pesos ImageNet — el checkpoint ya contiene todos los pesos entrenados.
     """
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
 
-    model = build_model(checkpoint["model_name"], num_classes=len(checkpoint["class_names"]))
+    model = build_model(
+        checkpoint["model_name"],
+        num_classes=len(checkpoint["class_names"]),
+        pretrained=False,
+    )
     model.load_state_dict(checkpoint["state_dict"])
     model.to(device)
     model.eval()

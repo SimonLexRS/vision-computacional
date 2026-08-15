@@ -52,8 +52,10 @@ def collect_images(path: Path) -> list[Path]:
 
 @torch.no_grad()
 def predict_image(model, image_path, transform, device, class_names):
-    img = Image.open(image_path)  # el modelo ya convierte a RGB de 3 canales
-    tensor = transform(img).unsqueeze(0).to(device)
+    # El context manager asegura cerrar el archivo al procesar carpetas.
+    with Image.open(image_path) as img:
+        # El modelo ya convierte a RGB de 3 canales (Grayscale→3 en transform).
+        tensor = transform(img).unsqueeze(0).to(device)
 
     logits = model(tensor)
     probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
