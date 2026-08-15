@@ -99,6 +99,17 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Borde de reconocimiento: transparente hasta que hay predicción. */
+  border: 4px solid transparent;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Reconocimiento activo: el borde completo de la imagen se rellena
+   con el color de la clase detectada (--det-color lo fija app.js),
+   con un glow exterior suave. */
+.video-wrapper.detecting {
+  border-color: var(--det-color, transparent);
+  box-shadow: 0 0 28px -4px var(--det-color, transparent);
 }
 
 .video-wrapper video,
@@ -226,12 +237,6 @@ body {
   border: 1px solid var(--panel-border);
 }
 
-/* Estado activo del toggle "Detección múltiple". */
-.btn.active {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 /* --- Pantalla completa --- */
 .camera-panel:fullscreen {
   background: var(--bg);
@@ -350,6 +355,10 @@ body {
 
   .panel {
     padding: 0.9rem;
+  }
+
+  .video-wrapper {
+    border-width: 3px;
   }
 
   /* Botones a todo el ancho: objetivos táctiles grandes. */
