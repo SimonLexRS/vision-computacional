@@ -18,23 +18,18 @@
 
   <main class="layout">
     <section class="panel camera-panel" id="camera-panel">
-      <div class="views" id="views">
-        <div class="video-wrapper" id="video-wrapper">
-          <video id="video" playsinline muted></video>
-          <canvas id="overlay" width="256" height="256" hidden></canvas>
-          <div class="roi-guide" id="roi-guide" hidden></div>
-          <div class="prediction-chip" id="prediction-chip" hidden>
-            <span class="chip-class" id="chip-class">—</span>
-            <span class="chip-conf" id="chip-conf">—</span>
-          </div>
-          <div class="placeholder" id="placeholder">
-            <p>Apunta la cámara a una superficie metálica.</p>
-            <p class="placeholder-small">La imagen se analiza en tu navegador; nada se sube a ningún servidor.</p>
-          </div>
+      <div class="video-wrapper" id="video-wrapper">
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay" width="256" height="256" hidden></canvas>
+        <canvas id="edges-overlay" hidden></canvas>
+        <div class="roi-guide" id="roi-guide" hidden></div>
+        <div class="prediction-chip" id="prediction-chip" hidden>
+          <span class="chip-class" id="chip-class">—</span>
+          <span class="chip-conf" id="chip-conf">—</span>
         </div>
-        <div class="edges-panel" id="edges-panel" hidden>
-          <p class="edges-title">Mapa de bordes (Sobel en vivo)</p>
-          <div class="edges-canvas-wrap"><canvas id="edges-view"></canvas></div>
+        <div class="placeholder" id="placeholder">
+          <p>Apunta la cámara a una superficie metálica.</p>
+          <p class="placeholder-small">La imagen se analiza en tu navegador; nada se sube a ningún servidor.</p>
         </div>
       </div>
 

@@ -44,10 +44,8 @@ const btnCamera = document.getElementById("btn-camera");
 const btnEdges = document.getElementById("btn-edges");
 const btnFullscreen = document.getElementById("btn-fullscreen");
 const cameraPanel = document.getElementById("camera-panel");
-const viewsEl = document.getElementById("views");
-const edgesPanel = document.getElementById("edges-panel");
-const edgesView = document.getElementById("edges-view");
-const edgesCtx = edgesView.getContext("2d");
+const edgesOverlay = document.getElementById("edges-overlay");
+const edgesCtx = edgesOverlay.getContext("2d");
 const fileInput = document.getElementById("file-input");
 const badge = document.getElementById("engine-badge");
 const statusEl = document.getElementById("status");
@@ -194,12 +192,15 @@ function showPrediction(probs) {
   updateBars(probs);
 }
 
-// --- Detección de bordes en vivo (Sobel sobre canvas, vista aparte) ---
+// --- Detección de bordes en vivo (Sobel sobre canvas, superpuesta al video) ---
 // Equivalente práctico de Canny para visualización en vivo: el
 // downscale del drawImage ya actúa como suavizado, luego magnitud de
 // Sobel + umbral. Barato en CPU (~384 px de ancho, loop por rAF).
+// Los bordes se dibujan en cian sobre un canvas transparente que
+// cubre exactamente el video (mismo posicionamiento que #overlay).
 const EDGES_WIDTH = 384;
 const EDGE_THRESHOLD = 80; // magnitud Sobel mínima (0-1020); subir = menos ruido
+const EDGE_COLOR = [56, 225, 255]; // cian brillante
 const edgeSrc = document.createElement("canvas");
 const edgeSrcCtx = edgeSrc.getContext("2d", { willReadFrequently: true });
 let edgesOn = false;
@@ -216,8 +217,8 @@ function computeEdges() {
   if (edgeSrc.width !== aw || edgeSrc.height !== ah) {
     edgeSrc.width = aw;
     edgeSrc.height = ah;
-    edgesView.width = aw;
-    edgesView.height = ah;
+    edgesOverlay.width = aw;
+    edgesOverlay.height = ah;
     edgeGray = new Float32Array(aw * ah);
     edgeOut = edgesCtx.createImageData(aw, ah);
   }
@@ -231,6 +232,8 @@ function computeEdges() {
     g[i] = 0.299 * sd[i * 4] + 0.587 * sd[i * 4 + 1] + 0.114 * sd[i * 4 + 2];
   }
 
+  // Fondo transparente; solo los píxeles de borde se pintan en cian.
+  od.fill(0);
   for (let y = 1; y < ah - 1; y++) {
     for (let x = 1; x < aw - 1; x++) {
       const i = y * aw + x;
@@ -240,12 +243,13 @@ function computeEdges() {
       const gy =
         -g[i - aw - 1] - 2 * g[i - aw] - g[i - aw + 1] +
         g[i + aw - 1] + 2 * g[i + aw] + g[i + aw + 1];
-      const v = Math.abs(gx) + Math.abs(gy) > EDGE_THRESHOLD ? 255 : 0;
-      const j = i * 4;
-      od[j] = v;
-      od[j + 1] = v;
-      od[j + 2] = v;
-      od[j + 3] = 255;
+      if (Math.abs(gx) + Math.abs(gy) > EDGE_THRESHOLD) {
+        const j = i * 4;
+        od[j] = EDGE_COLOR[0];
+        od[j + 1] = EDGE_COLOR[1];
+        od[j + 2] = EDGE_COLOR[2];
+        od[j + 3] = 255;
+      }
     }
   }
   edgesCtx.putImageData(edgeOut, 0, 0);
@@ -262,12 +266,12 @@ function setEdges(on) {
   btnEdges.disabled = !cameraStream;
   btnEdges.classList.toggle("active", edgesOn);
   btnEdges.textContent = edgesOn ? "Ocultar bordes" : "Detección de bordes";
-  edgesPanel.hidden = !edgesOn;
-  viewsEl.classList.toggle("edges-on", edgesOn);
+  edgesOverlay.hidden = !edgesOn;
   if (edgesOn) {
     edgesLoop();
   } else {
     cancelAnimationFrame(edgesRaf);
+    edgesCtx.clearRect(0, 0, edgesOverlay.width, edgesOverlay.height);
   }
 }
 
@@ -374,8 +378,8 @@ function stopCamera() {
   // Reset de la vista de bordes (requiere cámara activa).
   edgesOn = false;
   cancelAnimationFrame(edgesRaf);
-  edgesPanel.hidden = true;
-  viewsEl.classList.remove("edges-on");
+  edgesOverlay.hidden = true;
+  edgesCtx.clearRect(0, 0, edgesOverlay.width, edgesOverlay.height);
   btnEdges.disabled = true;
   btnEdges.classList.remove("active");
   btnEdges.textContent = "Detección de bordes";
