@@ -13,7 +13,7 @@ División **80/10/10 estratificada** (misma proporción por clase, sin solape en
 | Partición | Imágenes | Por clase | Uso |
 |-----------|----------|-----------|-----|
 | train | 12.000 | 2.400 | Entrenamiento (con data augmentation) |
-| validation | 1.500 | 300 | Early stopping y selección del mejor checkpoint |
+| val (validation) | 1.500 | 300 | Early stopping y selección del mejor checkpoint |
 | test | 1.500 | 300 | Evaluación final, una sola vez |
 
 ## Modelos
