@@ -22,6 +22,7 @@ body {
   color: var(--text);
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
   min-height: 100vh;
+  min-height: 100dvh; /* evita saltos con la barra del navegador móvil */
 }
 
 .site-header {
@@ -114,6 +115,9 @@ body {
      franjas negras. */
   object-fit: cover;
   display: block;
+  /* El overlay actúa como capa de dibujo de detecciones: nunca
+     debe interceptar clics/taps. */
+  pointer-events: none;
 }
 
 /* Marco que indica la zona exacta que analiza el modelo
@@ -222,6 +226,34 @@ body {
   border: 1px solid var(--panel-border);
 }
 
+/* Estado activo del toggle "Detección múltiple". */
+.btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* --- Pantalla completa --- */
+.camera-panel:fullscreen {
+  background: var(--bg);
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: auto;
+}
+
+/* En fullscreen el wrapper mantiene la proporción del stream
+   (--video-ar la fija app.js) y se limita al alto disponible. */
+.camera-panel:fullscreen .video-wrapper {
+  width: min(100%, calc(72dvh * var(--video-ar, 1.7778)));
+  margin: 0 auto;
+  flex: none;
+}
+
+.camera-panel:fullscreen .controls {
+  justify-content: center;
+}
+
 .hint {
   margin: 0.9rem 0 0;
   color: var(--muted);
@@ -295,4 +327,63 @@ body {
   cursor: pointer;
   color: var(--text);
   font-weight: 600;
+}
+
+/* --- Móvil (≤ 600px) --- */
+@media (max-width: 600px) {
+  .site-header {
+    padding: 0.9rem 1rem;
+  }
+
+  .site-header h1 {
+    font-size: 1.2rem;
+  }
+
+  .subtitle {
+    font-size: 0.78rem;
+  }
+
+  .layout {
+    padding: 1rem;
+    gap: 1rem;
+  }
+
+  .panel {
+    padding: 0.9rem;
+  }
+
+  /* Botones a todo el ancho: objetivos táctiles grandes. */
+  .controls {
+    gap: 0.5rem;
+  }
+
+  .controls .btn {
+    flex: 1 1 45%;
+    padding: 0.75rem 0.6rem;
+    font-size: 0.88rem;
+  }
+
+  .chip-class {
+    font-size: 0.95rem;
+  }
+
+  .chip-conf {
+    font-size: 0.8rem;
+  }
+
+  .prediction-chip {
+    top: 0.5rem;
+    left: 0.5rem;
+    padding: 0.35rem 0.6rem;
+  }
+
+  .roi-guide::after {
+    font-size: 0.62rem;
+    bottom: -1.2rem;
+  }
+
+  .bar-row {
+    grid-template-columns: 5.2rem 1fr 2.8rem;
+    font-size: 0.8rem;
+  }
 }
