@@ -24,6 +24,8 @@ const INFERENCE_INTERVAL_MS = 200;
 
 // --- Elementos de la UI ---
 const video = document.getElementById("video");
+const videoWrapper = document.getElementById("video-wrapper");
+const roiGuide = document.getElementById("roi-guide");
 const overlay = document.getElementById("overlay");
 const placeholder = document.getElementById("placeholder");
 const chip = document.getElementById("prediction-chip");
@@ -45,6 +47,20 @@ let inferenceTimer = null;
 let inferenceInFlight = false;
 let frameCount = 0;
 let fpsWindowStart = performance.now();
+// Suavizado exponencial de probabilidades para estabilizar la
+// predicción en vivo (evita parpadeo entre clases frame a frame).
+let smoothProbs = null;
+const SMOOTHING = 0.4;
+
+// Ajusta el marco de "zona de análisis" al cuadrado central del
+// wrapper (es exactamente la región que recorta el preprocesamiento).
+function layoutRoi() {
+  const side = Math.min(videoWrapper.clientWidth, videoWrapper.clientHeight) * 0.85;
+  roiGuide.style.width = `${side}px`;
+  roiGuide.style.height = `${side}px`;
+}
+
+window.addEventListener("resize", layoutRoi);
 
 // --- Barras de probabilidad ---
 const barFills = {};
@@ -145,15 +161,18 @@ async function runInference(source, srcWidth, srcHeight) {
     const latency = performance.now() - t0;
 
     const probs = softmax(Array.from(output.logits.data));
-    const bestIdx = probs.indexOf(Math.max(...probs));
+    smoothProbs = smoothProbs
+      ? probs.map((p, i) => SMOOTHING * p + (1 - SMOOTHING) * smoothProbs[i])
+      : probs;
+    const bestIdx = smoothProbs.indexOf(Math.max(...smoothProbs));
     const bestName = CLASS_NAMES[bestIdx];
 
     chip.hidden = false;
     chipClass.textContent = CLASS_LABELS[bestName];
     chipClass.style.color = `var(--${bestName})`;
-    chipConf.textContent = `${(probs[bestIdx] * 100).toFixed(1)}%`;
+    chipConf.textContent = `${(smoothProbs[bestIdx] * 100).toFixed(1)}%`;
 
-    updateBars(probs);
+    updateBars(smoothProbs);
     latencyEl.textContent = `Inferencia: ${latency.toFixed(0)} ms`;
 
     frameCount++;
@@ -176,7 +195,11 @@ async function startCamera() {
   btnCamera.disabled = true;
   try {
     cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" },
+      video: {
+        facingMode: "environment",
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
       audio: false,
     });
   } catch (err) {
@@ -193,6 +216,15 @@ async function startCamera() {
   overlay.hidden = true;
   placeholder.style.display = "none";
   await video.play();
+
+  // El wrapper adopta la proporción real del stream: con object-fit
+  // contain nada queda recortado y el video usa todo el panel.
+  if (video.videoWidth && video.videoHeight) {
+    videoWrapper.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+  }
+  smoothProbs = null;
+  roiGuide.hidden = false;
+  layoutRoi();
 
   statusEl.textContent = "Cámara activa — analizando en vivo.";
   btnCamera.textContent = "Detener cámara";
@@ -216,6 +248,8 @@ function stopCamera() {
   video.srcObject = null;
   placeholder.style.display = "flex";
   chip.hidden = true;
+  roiGuide.hidden = true;
+  smoothProbs = null;
   statusEl.textContent = "Cámara detenida.";
   btnCamera.textContent = "Activar cámara";
   fpsEl.textContent = "FPS: —";
@@ -237,15 +271,19 @@ function handleUpload(event) {
     if (cameraStream) stopCamera();
     video.hidden = true;
 
+    // El overlay se dibuja a la resolución de la imagen (tope 1024 px)
+    // y el wrapper adopta su proporción: object-fit contain evita cortes.
+    const scale = Math.min(1, 1024 / Math.max(img.width, img.height));
+    overlay.width = Math.round(img.width * scale);
+    overlay.height = Math.round(img.height * scale);
     const ctx = overlay.getContext("2d");
-    // Encuadre tipo "cover".
-    const scale = Math.max(overlay.width / img.width, overlay.height / img.height);
-    const w = img.width * scale;
-    const h = img.height * scale;
-    ctx.clearRect(0, 0, overlay.width, overlay.height);
-    ctx.drawImage(img, (overlay.width - w) / 2, (overlay.height - h) / 2, w, h);
+    ctx.drawImage(img, 0, 0, overlay.width, overlay.height);
     overlay.hidden = false;
     placeholder.style.display = "none";
+    videoWrapper.style.aspectRatio = `${overlay.width} / ${overlay.height}`;
+    smoothProbs = null;
+    roiGuide.hidden = false;
+    layoutRoi();
 
     runInference(img, img.width, img.height);
     statusEl.textContent = "Imagen analizada: " + file.name;
@@ -263,3 +301,9 @@ btnCamera.addEventListener("click", () => {
   else startCamera();
 });
 fileInput.addEventListener("change", handleUpload);
+
+// Gancho de prueba automatizada: ?autocam=1 activa la cámara sin clic
+// (se usa con --use-fake-device-for-media-stream en tests headless).
+if (new URLSearchParams(location.search).has("autocam")) {
+  startCamera();
+}

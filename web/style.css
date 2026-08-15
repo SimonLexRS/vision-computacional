@@ -68,10 +68,10 @@ body {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr);
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
   gap: 1.5rem;
   padding: 1.5rem 2rem 2rem;
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
 }
 
@@ -102,10 +102,43 @@ body {
 
 .video-wrapper video,
 .video-wrapper canvas#overlay {
+  /* Posición absoluta: el wrapper es flex (para centrar el placeholder)
+     y el layout flex puede desplazar elementos replaced como <video>;
+     con inset 0 siempre cubren exactamente el wrapper. */
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
+  /* El wrapper adopta la proporción real del stream vía JS, así que
+     cover equivale a contain (rellena sin recortar) y nunca deja
+     franjas negras. */
   object-fit: cover;
   display: block;
+}
+
+/* Marco que indica la zona exacta que analiza el modelo
+   (recorte central cuadrado del preprocesamiento). */
+.roi-guide {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border: 2px dashed rgba(79, 140, 255, 0.9);
+  border-radius: 8px;
+  /* Atenúa todo lo que queda fuera de la zona de análisis. */
+  box-shadow: 0 0 0 9999px rgba(10, 14, 24, 0.35);
+  pointer-events: none;
+}
+
+.roi-guide::after {
+  content: "zona de análisis";
+  position: absolute;
+  bottom: -1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .placeholder {
