@@ -237,6 +237,44 @@ body {
   border: 1px solid var(--panel-border);
 }
 
+/* Estado activo de los toggles (p. ej. "Detección de bordes"). */
+.btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* --- Vista de bordes (junto al video) --- */
+.views {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+/* Escritorio amplio: original y mapa de bordes lado a lado. */
+@media (min-width: 1100px) {
+  .views.edges-on {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.edges-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.edges-canvas-wrap {
+  background: #0a0e18;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.edges-canvas-wrap canvas {
+  width: 100%;
+  display: block;
+}
+
 /* --- Pantalla completa --- */
 .camera-panel:fullscreen {
   background: var(--bg);

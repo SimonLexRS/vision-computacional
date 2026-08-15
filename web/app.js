@@ -41,8 +41,13 @@ const chip = document.getElementById("prediction-chip");
 const chipClass = document.getElementById("chip-class");
 const chipConf = document.getElementById("chip-conf");
 const btnCamera = document.getElementById("btn-camera");
+const btnEdges = document.getElementById("btn-edges");
 const btnFullscreen = document.getElementById("btn-fullscreen");
 const cameraPanel = document.getElementById("camera-panel");
+const viewsEl = document.getElementById("views");
+const edgesPanel = document.getElementById("edges-panel");
+const edgesView = document.getElementById("edges-view");
+const edgesCtx = edgesView.getContext("2d");
 const fileInput = document.getElementById("file-input");
 const badge = document.getElementById("engine-badge");
 const statusEl = document.getElementById("status");
@@ -189,6 +194,83 @@ function showPrediction(probs) {
   updateBars(probs);
 }
 
+// --- Detección de bordes en vivo (Sobel sobre canvas, vista aparte) ---
+// Equivalente práctico de Canny para visualización en vivo: el
+// downscale del drawImage ya actúa como suavizado, luego magnitud de
+// Sobel + umbral. Barato en CPU (~384 px de ancho, loop por rAF).
+const EDGES_WIDTH = 384;
+const EDGE_THRESHOLD = 80; // magnitud Sobel mínima (0-1020); subir = menos ruido
+const edgeSrc = document.createElement("canvas");
+const edgeSrcCtx = edgeSrc.getContext("2d", { willReadFrequently: true });
+let edgesOn = false;
+let edgesRaf = 0;
+let edgeGray = null; // buffers reutilizados (sin allocations por frame)
+let edgeOut = null;
+
+function computeEdges() {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) return;
+  const aw = EDGES_WIDTH;
+  const ah = Math.max(1, Math.round((EDGES_WIDTH * vh) / vw));
+  if (edgeSrc.width !== aw || edgeSrc.height !== ah) {
+    edgeSrc.width = aw;
+    edgeSrc.height = ah;
+    edgesView.width = aw;
+    edgesView.height = ah;
+    edgeGray = new Float32Array(aw * ah);
+    edgeOut = edgesCtx.createImageData(aw, ah);
+  }
+
+  edgeSrcCtx.drawImage(video, 0, 0, aw, ah);
+  const sd = edgeSrcCtx.getImageData(0, 0, aw, ah).data;
+  const od = edgeOut.data;
+  const g = edgeGray;
+
+  for (let i = 0; i < aw * ah; i++) {
+    g[i] = 0.299 * sd[i * 4] + 0.587 * sd[i * 4 + 1] + 0.114 * sd[i * 4 + 2];
+  }
+
+  for (let y = 1; y < ah - 1; y++) {
+    for (let x = 1; x < aw - 1; x++) {
+      const i = y * aw + x;
+      const gx =
+        -g[i - aw - 1] - 2 * g[i - 1] - g[i + aw - 1] +
+        g[i - aw + 1] + 2 * g[i + 1] + g[i + aw + 1];
+      const gy =
+        -g[i - aw - 1] - 2 * g[i - aw] - g[i - aw + 1] +
+        g[i + aw - 1] + 2 * g[i + aw] + g[i + aw + 1];
+      const v = Math.abs(gx) + Math.abs(gy) > EDGE_THRESHOLD ? 255 : 0;
+      const j = i * 4;
+      od[j] = v;
+      od[j + 1] = v;
+      od[j + 2] = v;
+      od[j + 3] = 255;
+    }
+  }
+  edgesCtx.putImageData(edgeOut, 0, 0);
+}
+
+function edgesLoop() {
+  if (!edgesOn) return;
+  if (video.readyState >= 2) computeEdges();
+  edgesRaf = requestAnimationFrame(edgesLoop);
+}
+
+function setEdges(on) {
+  edgesOn = on && !!cameraStream;
+  btnEdges.disabled = !cameraStream;
+  btnEdges.classList.toggle("active", edgesOn);
+  btnEdges.textContent = edgesOn ? "Ocultar bordes" : "Detección de bordes";
+  edgesPanel.hidden = !edgesOn;
+  viewsEl.classList.toggle("edges-on", edgesOn);
+  if (edgesOn) {
+    edgesLoop();
+  } else {
+    cancelAnimationFrame(edgesRaf);
+  }
+}
+
 // --- Inferencia ---
 async function runInference(source, srcWidth, srcHeight) {
   // Guard anti-solapamiento: si la inferencia anterior no terminó,
@@ -267,6 +349,7 @@ async function startCamera() {
   statusEl.textContent = "Cámara activa — analizando en vivo.";
   btnCamera.textContent = "Detener cámara";
   btnCamera.disabled = false;
+  btnEdges.disabled = false;
 
   clearInterval(inferenceTimer);
   inferenceTimer = setInterval(() => {
@@ -274,6 +357,11 @@ async function startCamera() {
       runInference(video, video.videoWidth, video.videoHeight);
     }
   }, INFERENCE_INTERVAL_MS);
+
+  // Gancho de prueba automatizada: ?edges=1 activa la vista de bordes.
+  if (new URLSearchParams(location.search).has("edges")) {
+    setEdges(true);
+  }
 }
 
 function stopCamera() {
@@ -283,6 +371,14 @@ function stopCamera() {
     cameraStream.getTracks().forEach((t) => t.stop());
     cameraStream = null;
   }
+  // Reset de la vista de bordes (requiere cámara activa).
+  edgesOn = false;
+  cancelAnimationFrame(edgesRaf);
+  edgesPanel.hidden = true;
+  viewsEl.classList.remove("edges-on");
+  btnEdges.disabled = true;
+  btnEdges.classList.remove("active");
+  btnEdges.textContent = "Detección de bordes";
   video.srcObject = null;
   placeholder.style.display = "flex";
   chip.hidden = true;
@@ -343,6 +439,7 @@ btnCamera.addEventListener("click", () => {
   else startCamera();
 });
 fileInput.addEventListener("change", handleUpload);
+btnEdges.addEventListener("click", () => setEdges(!edgesOn));
 
 // --- Pantalla completa ---
 if (!document.fullscreenEnabled) {
