@@ -27,23 +27,82 @@ División **80/10/10 estratificada** (misma proporción por clase, sin solape en
 
 Entrenamiento con pesos ImageNet (la CNN se entrena desde cero), early stopping sobre F1 macro de validación, semilla fija (42) para reproducibilidad.
 
+## Demo web (cámara en vivo)
+
+Demo interactiva desplegada en GitHub Pages: **https://simonlexrs.github.io/vision-computacional/**
+
+- Activa la cámara y enfoca una superficie metálica: la clasificación corre **en vivo, 100% en el navegador** (MobileNetV3-Small exportado a ONNX + ONNX Runtime Web). Ninguna imagen sale del dispositivo.
+- Sin cámara disponible, también acepta **subir una imagen**.
+- El modelo servido (`web/model.onnx`, 6.4 MB) se genera con `src/export_onnx.py` y su paridad con PyTorch queda verificada en la exportación.
+
 ## Cómo ejecutar
 
 ```bash
 pip install -r requirements.txt
-jupyter notebook entrenar_modelos.ipynb
 ```
 
-Requisitos: Python 3.12+, PyTorch con CUDA. Por defecto el notebook usa GPU (`DEVICE_MODE = "cuda"` en la sección de configuración; puede cambiarse a `"auto"` o `"cpu"`).
+### Entrenamiento (línea de comandos, sin Jupyter)
+
+```bash
+# Reproduce el resultado del informe (los defaults son los hiperparámetros reportados)
+python src/train.py --datos industrial_defect_dataset/ --salida outputs/checkpoints/
+
+# Entrenar solo un modelo, p. ej.:
+python src/train.py --modelos mobilenet_v3_small --epochs 20
+```
+
+### Evaluación sobre test
+
+```bash
+python src/evaluate.py --modelo outputs/checkpoints/mobilenet_v3_small_best.pt \
+    --datos industrial_defect_dataset/ --split test
+```
+
+### Inferencia
+
+```bash
+# CPU por defecto; acepta una imagen o una carpeta
+python src/predict.py --modelo outputs/checkpoints/mobilenet_v3_small_best.pt \
+    --imagen industrial_defect_dataset/test/crack/
+```
+
+O con el notebook sin GPU (carga los pesos con `map_location="cpu"`):
+
+```bash
+jupyter notebook notebooks/inferencia_cpu.ipynb
+```
+
+### Exportar el modelo para la demo web
+
+```bash
+python src/export_onnx.py --checkpoint outputs/checkpoints/mobilenet_v3_small_best.pt \
+    --salida web/model.onnx
+```
+
+> **Pesos entrenados:** los `.pt` no están versionados (carpeta `outputs/` en `.gitignore`).
+> Para obtenerlos sin reentrenar: <!-- TODO(equipo): subir mobilenet_v3_small_best.pt a Drive/HF y pegar la URL -->
+> `gdown <URL_DEL_MODELO> -O outputs/checkpoints/mobilenet_v3_small_best.pt`.
+> Alternativamente, `python src/train.py` los regenera con los mismos resultados (semilla 42 fijada).
+
+Requisitos: Python 3.12+, PyTorch (CUDA opcional — `train.py` y el notebook usan GPU si está disponible; `evaluate.py`, `predict.py` e `inferencia_cpu.ipynb` corren en CPU). El notebook de entrenamiento completo también puede ejecutarse desde Jupyter: `jupyter notebook entrenar_modelos.ipynb` (`DEVICE_MODE = "cuda"` por defecto; puede cambiarse a `"auto"` o `"cpu"`).
 
 Estructura relevante:
 
 ```
 ├── industrial_defect_dataset/   # train/ + val/ + test/
 ├── entrenar_modelos.ipynb       # pipeline completo: datos, entrenamiento, evaluación e interpretación
+├── notebooks/
+│   └── inferencia_cpu.ipynb     # inferencia CPU-only con el modelo entrenado
+├── src/                         # scripts CLI (argparse, semillas fijadas)
+│   ├── train.py                 # entrena y guarda checkpoints
+│   ├── evaluate.py              # métricas sobre test/ o val/
+│   ├── predict.py               # inferencia sobre imagen o carpeta (CPU)
+│   ├── export_onnx.py           # exporta a ONNX para la demo web
+│   └── common.py                # arquitecturas, transforms y utilidades compartidas
+├── web/                         # demo web estática (GitHub Pages + ONNX Runtime Web)
 ├── docs/figures/                # gráficos del experimento (curvas, matrices de confusión)
 ├── DOCUMENTO_PROYECTO.md
-└── requirements.txt
+└── requirements.txt             # versiones fijadas
 ```
 
 ## Resultados

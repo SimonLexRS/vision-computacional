@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inspector de Defectos — Visión Computacional</title>
+  <meta name="description" content="Demo en vivo: clasificación de defectos en superficies metálicas con MobileNetV3-Small + ONNX Runtime Web. La inferencia ocurre 100% en tu navegador." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div>
+      <h1>Inspector de Defectos</h1>
+      <p class="subtitle">Clasificación de superficies metálicas en vivo — MobileNetV3-Small + ONNX Runtime Web</p>
+    </div>
+    <span class="badge" id="engine-badge">cargando modelo…</span>
+  </header>
+
+  <main class="layout">
+    <section class="panel camera-panel">
+      <div class="video-wrapper" id="video-wrapper">
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay" width="256" height="256" hidden></canvas>
+        <div class="prediction-chip" id="prediction-chip" hidden>
+          <span class="chip-class" id="chip-class">—</span>
+          <span class="chip-conf" id="chip-conf">—</span>
+        </div>
+        <div class="placeholder" id="placeholder">
+          <p>Apunta la cámara a una superficie metálica.</p>
+          <p class="placeholder-small">La imagen se analiza en tu navegador; nada se sube a ningún servidor.</p>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="btn-camera" class="btn btn-primary">Activar cámara</button>
+        <label class="btn btn-secondary">
+          Subir imagen
+          <input type="file" id="file-input" accept="image/*" hidden />
+        </label>
+      </div>
+
+      <p class="hint" id="status">Modelo: MobileNetV3-Small · entrada 256×256 · 5 clases</p>
+    </section>
+
+    <section class="panel results-panel">
+      <h2>Probabilidades</h2>
+      <ul class="bars" id="bars">
+        <!-- Las barras se generan por JS -->
+      </ul>
+      <div class="meta">
+        <span id="fps">FPS: —</span>
+        <span id="latency">Inferencia: — ms</span>
+      </div>
+      <details class="about">
+        <summary>Acerca del modelo</summary>
+        <p>
+          Clasificador de defectos industriales (<em>crack, hole, normal, rust, scratch</em>)
+          entrenado con transfer learning sobre 15.000 imágenes sintéticas
+          (dataset de Kaggle, CC BY 4.0). En el conjunto de test alcanzó
+          accuracy y F1 = 1.0000.
+        </p>
+        <p>
+          Demo académica: el dataset es sintético y los resultados son una cota
+          superior bajo condiciones ideales, no una garantía en producción.
+        </p>
+      </details>
+    </section>
+  </main>
+
+  <canvas id="preprocess" width="256" height="256" hidden></canvas>
+
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
