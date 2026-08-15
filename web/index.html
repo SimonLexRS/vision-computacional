@@ -18,22 +18,29 @@
 
   <main class="layout">
     <section class="panel camera-panel" id="camera-panel">
-      <div class="video-wrapper" id="video-wrapper">
-        <video id="video" playsinline muted></video>
-        <canvas id="overlay" width="256" height="256" hidden></canvas>
-        <div class="roi-guide" id="roi-guide" hidden></div>
-        <div class="prediction-chip" id="prediction-chip" hidden>
-          <span class="chip-class" id="chip-class">—</span>
-          <span class="chip-conf" id="chip-conf">—</span>
+      <div class="views" id="views">
+        <div class="video-wrapper" id="video-wrapper">
+          <video id="video" playsinline muted></video>
+          <canvas id="overlay" width="256" height="256" hidden></canvas>
+          <div class="roi-guide" id="roi-guide" hidden></div>
+          <div class="prediction-chip" id="prediction-chip" hidden>
+            <span class="chip-class" id="chip-class">—</span>
+            <span class="chip-conf" id="chip-conf">—</span>
+          </div>
+          <div class="placeholder" id="placeholder">
+            <p>Apunta la cámara a una superficie metálica.</p>
+            <p class="placeholder-small">La imagen se analiza en tu navegador; nada se sube a ningún servidor.</p>
+          </div>
         </div>
-        <div class="placeholder" id="placeholder">
-          <p>Apunta la cámara a una superficie metálica.</p>
-          <p class="placeholder-small">La imagen se analiza en tu navegador; nada se sube a ningún servidor.</p>
+        <div class="edges-panel" id="edges-panel" hidden>
+          <p class="edges-title">Mapa de bordes (Sobel en vivo)</p>
+          <div class="edges-canvas-wrap"><canvas id="edges-view"></canvas></div>
         </div>
       </div>
 
       <div class="controls">
         <button id="btn-camera" class="btn btn-primary">Activar cámara</button>
+        <button id="btn-edges" class="btn btn-secondary" disabled>Detección de bordes</button>
         <button id="btn-fullscreen" class="btn btn-secondary">Pantalla completa</button>
         <label class="btn btn-secondary">
           Subir imagen
