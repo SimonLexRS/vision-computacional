@@ -12,3 +12,6 @@ Thumbs.db
 outputs/
 .ipynb_checkpoints/
 # docs/figures/ se versiona (gráficos del README)
+.venv-1/
+/.venv-labs
+Rubrica.md
