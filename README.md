@@ -13,7 +13,7 @@ División **80/10/10 estratificada** (misma proporción por clase, sin solape en
 | Partición | Imágenes | Por clase | Uso |
 |-----------|----------|-----------|-----|
 | train | 12.000 | 2.400 | Entrenamiento (con data augmentation) |
-| validation | 1.500 | 300 | Early stopping y selección del mejor checkpoint |
+| val (validation) | 1.500 | 300 | Early stopping y selección del mejor checkpoint |
 | test | 1.500 | 300 | Evaluación final, una sola vez |
 
 ## Modelos
@@ -84,7 +84,7 @@ python src/export_onnx.py --checkpoint outputs/checkpoints/mobilenet_v3_small_be
 > `gdown <URL_DEL_MODELO> -O outputs/checkpoints/mobilenet_v3_small_best.pt`.
 > Alternativamente, `python src/train.py` los regenera con los mismos resultados (semilla 42 fijada).
 
-Requisitos: Python 3.12+, PyTorch (CUDA opcional — `train.py` y el notebook usan GPU si está disponible; `evaluate.py`, `predict.py` e `inferencia_cpu.ipynb` corren en CPU). El notebook de entrenamiento completo también puede ejecutarse desde Jupyter: `jupyter notebook entrenar_modelos.ipynb` (`DEVICE_MODE = "cuda"` por defecto; puede cambiarse a `"auto"` o `"cpu"`).
+Requisitos: Python 3.12+, PyTorch (CUDA opcional — `train.py` y el notebook usan GPU si está disponible; `evaluate.py`, `predict.py` e `inferencia_cpu.ipynb` corren en CPU). El notebook de entrenamiento completo también puede ejecutarse desde Jupyter: `jupyter notebook entrenar_modelos.ipynb` (`DEVICE_MODE = "cuda"` por defecto; puede cambiarse a `"auto"`, `"cpu"` o `"mps"`).
 
 Estructura relevante:
 
