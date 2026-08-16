@@ -1,4 +1,26 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/figures/brand/ucb-logo-dark.png">
+    <img src="docs/figures/brand/ucb-logo-vertical.png" alt="Universidad Católica Boliviana" width="230">
+  </picture>
+</p>
+
 # Visión computacional: detección y clasificación de defectos en superficies metálicas
+
+**Proyecto Final — Módulo Visión Computacional** · Maestría en Ciencia de Datos e Inteligencia Artificial Aplicada · **Universidad Católica Boliviana**
+
+> **Problema:** dada una imagen (o el video en vivo de una cámara) de una superficie metálica, decidir automáticamente si la pieza está en condiciones normales o presenta defectos —grietas, perforaciones, óxido o rayones— y **localizar cada defecto** con su caja y tipo, para apoyar la decisión de aceptar o reprobar la pieza en una línea de inspección de calidad.
+
+## 👥 Equipo
+
+| Integrante | Rol |
+|:---|:---|
+| **Simon Alex Rodriguez Saavedra** | Líder del proyecto |
+| **Jennifer Suarez Gutierrez** | Entrenamiento de la red neuronal CNN baseline |
+| **Daniel Ribera Añez** | Contribuidor |
+| **Daniela Alejandra Caro Arrazola** | Contribuidora |
+
+📄 **Informe técnico (artículo científico, Entregable A):** [`informe/main.pdf`](informe/main.pdf) — fuente LaTeX en [`informe/main.tex`](informe/main.tex).
 
 Proyecto integral de detección de objetos y clasificación multi-clase de defectos industriales en metal: combina un **Gate clasificador de dominio** (MobileNetV3-Small) y un **detector YOLOv8n en tiempo real** entrenados con aceleración por hardware (**GPU NVIDIA GeForce RTX 5060 Ti**) sobre datasets combinados sintéticos y reales.
 
@@ -84,6 +106,18 @@ Demo interactiva desplegada en GitHub Pages: **https://simonlexrs.github.io/visi
 - **Modo Maximizado Inmersivo (HUD):** Permite ver la cámara a pantalla completa (`100vw × 100dvh`) con controles flotantes de zoom, bordes Sobel por clase y métricas de FPS en tiempo real.
 - **Filtros Anti-Ruido Calibrados:** Protección contra falsos positivos nocturnos en sensor ISO y calibración por clase (umbral general al 35%, óxido al 50%).
 
+### 📸 Capturas del testing (modelo desplegado)
+
+Pruebas de extremo a extremo sobre la app desplegada, subiendo imágenes del split de **test** (no visto en entrenamiento) y una escena fuera de dominio:
+
+| Detección de grieta | Superficie normal |
+|:---:|:---:|
+| ![Testing: grieta detectada](docs/figures/demo/demo_crack.png) | ![Testing: superficie normal](docs/figures/demo/demo_normal.png) |
+| **Gate OOD (escena no metálica)** | **Acerca del modelo / créditos** |
+| ![Testing: fuera de dominio](docs/figures/demo/demo_ood.png) | ![Acerca del modelo](docs/figures/demo/demo_about.png) |
+
+El chip superior muestra clase y confianza; el panel lateral, el conteo por clase y las probabilidades del gate. Más capturas (rayón, óxido, perforación) en [`docs/figures/demo/`](docs/figures/demo/).
+
 ---
 
 ## 🚀 Pipeline de Ejecución y Entrenamiento
@@ -153,10 +187,20 @@ Resultado del entrenamiento reproducible (notebook Sección 15 / `python src/tra
 
 ---
 
+## ⚠️ Limitaciones conocidas
+
+- **Cajas de entrenamiento heurísticas:** en la fuente sintética y en SteelDefectX las bounding boxes se derivan de metadata + segmentación OpenCV (no de anotación humana); solo NEU-DET aporta cajas reales. Las métricas de detección son por tanto **exploratorias**, no un benchmark estándar.
+- **Dominio mayoritariamente sintético:** la clasificación perfecta (F1 = 1.0) es una **cota superior bajo condiciones ideales**; existe riesgo de *sim-to-real gap* en piezas reales.
+- **Cambio de benchmark:** al integrar NEU-DET el split de test se volvió más exigente (177 imágenes reales con cajas anotadas), por lo que el mAP50 del detector (0.739) no es comparable directamente con corridas anteriores sobre el test de 2 fuentes.
+- **Reproducibilidad:** semillas fijadas (`SEED=42`) en todos los scripts; el entrenamiento en GPU puede variar mínimamente por operaciones no determinísticas de CUDA/AMP.
+- Detalle completo en el informe: [`informe/main.pdf`](informe/main.pdf).
+
+---
+
 ## 📄 Licencia y Atribución
 
 - **Datasets:**
   - [Synthetic Industrial Metal Surface Defects](https://www.kaggle.com/datasets/tatheerabbas/synthetic-industrial-metal-surface-defects) bajo licencia **CC BY 4.0** (Tatheer Abbas).
   - [SteelDefectX](https://huggingface.co/datasets/Zhaosxian/SteelDefectX) (Zhao et al., 2024).
   - [NEU-DET Database](http://faculty.neu.edu.cn/yunhyan/NEU_surface_defect_database.html) (Song & Yan, Northeastern University).
-- **Código y Modelos:** Proyecto desarrollado por **Simon Alex Rodriguez** para la Maestría en Inteligencia Artificial (Módulo de Visión Computacional).
+- **Código y Modelos:** Proyecto desarrollado por el equipo del Proyecto Final (ver [👥 Equipo](#-equipo)) para el módulo de **Visión Computacional**, Maestría en Ciencia de Datos e Inteligencia Artificial Aplicada, **Universidad Católica Boliviana**.
