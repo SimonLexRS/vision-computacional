@@ -23,3 +23,5 @@ onnxscript==0.7.1
 opencv-python==4.12.0.88
 # Detector YOLOv8n para la demo web (src/train_yolo.py)
 ultralytics==8.4.120
+# Calibración del gate de dominio (src/calibrate_gate.py, imágenes OOD de skimage.data)
+scikit-image==0.26.0

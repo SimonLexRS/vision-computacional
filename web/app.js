@@ -4,10 +4,11 @@
  * Pipeline en dos etapas, 100% en el navegador (ONNX Runtime Web, WASM):
  *
  *   1. GATE DE DOMINIO — MobileNetV3-Small (model.onnx), clasificador de
- *      5 clases (crack, hole, normal, rust, scratch). Si su confianza
- *      suavizada < GATE_THRESHOLD la escena es fuera de dominio: se
- *      reporta "Indefinido" y NO se muestra ninguna detección ni borde.
- *      Así solo se muestran las clases para las que se entrenó el sistema.
+ *      5 clases (crack, hole, normal, rust, scratch). Con histéresis
+ *      (entra ≥ GATE_HI, sale < GATE_LO; umbrales calibrados con
+ *      src/calibrate_gate.py): fuera de dominio se reporta "Indefinido"
+ *      y NO se muestra ninguna detección ni borde. Así solo se muestran
+ *      las clases para las que se entrenó el sistema.
  *
  *   2. DETECTOR — YOLOv8n (detector.onnx), 4 clases de defecto
  *      (crack, hole, rust, scratch). Solo corre cuando el gate está en
@@ -48,11 +49,14 @@ const CLASS_RGB = {
 const IMAGENET_MEAN = [0.485, 0.456, 0.406];
 const IMAGENET_STD = [0.229, 0.224, 0.225];
 const TICK_MS = 200;
-// Por debajo de esta confianza suavizada la escena se considera fuera
-// de dominio y se reporta "Indefinido" en lugar de una clase al azar.
-const GATE_THRESHOLD = 0.45;
+// Gate con histéresis, calibrado con src/calibrate_gate.py: in-domain
+// del dataset ≥ 0.988; escenas arbitrarias típicas < 0.96. Entrar en
+// dominio exige GATE_HI; salir, caer por debajo de GATE_LO.
+const GATE_HI = 0.96;
+const GATE_LO = 0.85;
 const DET_THRESHOLD = 0.4; // score mínimo por caja del detector
 const NMS_IOU = 0.45;
+const MAX_BOXES = 8; // tope de cajas dibujadas/listadas
 
 // --- Elementos de la UI ---
 const video = document.getElementById("video");
@@ -109,6 +113,8 @@ const SMOOTHING = 0.3;
 let activeDets = [];
 let prevDets = [];
 let edgesOn = false;
+// Estado del gate con histéresis (evita parpadeo en el umbral).
+let inDomain = false;
 // Última imagen estática analizada (para re-correr el pipeline al
 // activar "Bordes por detección" sin cámara).
 let lastStaticSource = null;
@@ -122,6 +128,20 @@ function layoutRoi() {
 }
 
 window.addEventListener("resize", layoutRoi);
+
+// Re-sincroniza el wrapper con las dimensiones reales del stream: en
+// celulares el video puede cambiar de orientación al rotar el teléfono
+// (el evento "resize" del <video> dispara cuando videoWidth/Height
+// cambian). Sin esto, las cajas quedarían desalineadas.
+function syncVideoLayout() {
+  if (!video.videoWidth || !video.videoHeight) return;
+  videoWrapper.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+  // Variable CSS usada por el layout de pantalla completa.
+  videoWrapper.style.setProperty("--video-ar", video.videoWidth / video.videoHeight);
+  layoutRoi();
+}
+video.addEventListener("resize", syncVideoLayout);
+window.addEventListener("orientationchange", () => setTimeout(syncVideoLayout, 250));
 
 // --- Pills de estado ---
 function setPill(el, state) {
@@ -188,7 +208,7 @@ function updateDetList(dets) {
     detList.innerHTML = '<li class="det-empty">— sin detecciones —</li>';
     return;
   }
-  for (const d of dets.slice(0, 8)) {
+  for (const d of dets.slice(0, MAX_BOXES)) {
     const row = document.createElement("li");
     row.className = "det-row";
     row.innerHTML = `
@@ -353,10 +373,13 @@ function iou(a, b) {
 }
 
 function nms(dets) {
+  // NMS agnóstico de clase: dos cajas muy solapadas son el mismo
+  // defecto aunque el detector dude de la clase (evita cajas
+  // redundantes una encima de otra).
   const order = [...dets].sort((a, b) => b.score - a.score);
   const keep = [];
   for (const d of order) {
-    if (keep.every((k) => k.cls !== d.cls || iou(k, d) <= NMS_IOU)) keep.push(d);
+    if (keep.every((k) => iou(k, d) <= NMS_IOU)) keep.push(d);
   }
   return keep;
 }
@@ -417,55 +440,70 @@ function resetTracker() {
 }
 
 // --- Publicación en la UI ---
-function showResults(probs, gateConfident, dets) {
+// Máquina de estados:
+//   fuera de dominio                     → "Indefinido", pantalla limpia
+//   en dominio + cajas                   → cajas de defecto + chip de clase
+//   en dominio + sin cajas + gate=normal → "Normal — sin defectos"
+//   en dominio + sin cajas + gate=defecto → "Indefinido" (gate y detector
+//   en desacuerdo: típico fuera de dominio o defecto que no se confirma)
+function showResults(probs, dets) {
   const bestIdx = probs.indexOf(Math.max(...probs));
-  const gateName = CLS_NAMES[bestIdx];
+  const gateTop = CLS_NAMES[bestIdx];
   const gateConf = probs[bestIdx];
 
-  let detColor = "var(--color-oos)";
+  let color = "var(--color-oos)";
   let label = "Indefinido";
   let confText = `${(gateConf * 100).toFixed(1)}%`;
 
-  if (gateConfident && dets.length) {
+  if (inDomain && dets.length) {
     const top = dets[0]; // vienen ordenados por score tras NMS+track
-    detColor = `var(--color-${top.name})`;
+    color = `var(--color-${top.name})`;
     label = CLASS_LABELS[top.name];
     confText = `${(top.score * 100).toFixed(1)}%`;
-  } else if (gateConfident) {
-    detColor = "var(--color-normal)";
+  } else if (inDomain && gateTop === "normal") {
+    color = "var(--color-normal)";
     label = "Normal — sin defectos";
-    confText = `${(gateConf * 100).toFixed(1)}%`;
   }
 
-  // Marco del wrapper en el color de estado (gris si fuera de dominio).
-  videoWrapper.style.setProperty("--det-color", detColor);
-  videoWrapper.classList.add("detecting");
-
+  // Chip de estado (el marcado visual son SOLO las cajas: ya no hay
+  // marco de color alrededor de todo el frame).
   chip.hidden = false;
+  chipDot.style.background = color;
   chipClass.textContent = label;
-  chipClass.style.color = detColor;
+  chipClass.style.color = color;
   chipConf.textContent = confText;
 
   // Contador de defectos.
-  const showCount = gateConfident && dets.length > 0;
+  const showCount = inDomain && dets.length > 0;
   detCount.hidden = !showCount;
   if (showCount) {
     detCount.textContent = `${dets.length} defecto${dets.length > 1 ? "s" : ""}`;
   }
 
-  // Estado del sistema.
+  // La guía ROI solo ayuda a encuadrar cuando NO hay nada detectado;
+  // con detecciones activas se oculta para no tapar el marcado.
+  roiGuide.hidden = !hasSource() || dets.length > 0;
+
+  // Estado del sistema (coherente con el chip).
   sysState.classList.remove("is-idle", "is-in", "is-out");
-  if (gateConfident) {
-    sysState.classList.add("is-in");
-    sysStateText.textContent = "En dominio — inspeccionando";
-  } else {
+  if (!inDomain) {
     sysState.classList.add("is-out");
     sysStateText.textContent = "Fuera de dominio";
+  } else if (dets.length) {
+    sysState.classList.add("is-in");
+    sysStateText.textContent = "En dominio — inspeccionando";
+  } else if (gateTop === "normal") {
+    sysState.classList.add("is-in");
+    sysStateText.textContent = "En dominio — sin defectos";
+  } else {
+    // Gate dice un defecto pero el detector no lo confirma.
+    sysState.classList.add("is-out");
+    sysStateText.textContent = "Sin detección clara";
   }
 
   updateBars(probs);
-  updateCounts(gateConfident ? dets : []);
-  updateDetList(gateConfident ? dets : []);
+  updateCounts(inDomain ? dets : []);
+  updateDetList(inDomain ? dets : []);
 }
 
 // --- Dibujo de cajas (esquinas tipo target, estilo HMI) ---
@@ -636,28 +674,38 @@ async function runTick(source, srcWidth, srcHeight) {
     smoothProbs = smoothProbs
       ? probs.map((p, i) => SMOOTHING * p + (1 - SMOOTHING) * smoothProbs[i])
       : probs;
-    const gateConfident = Math.max(...smoothProbs) >= GATE_THRESHOLD;
+    // Histéresis del gate: entrar en dominio exige más que mantenerse.
+    const gateMax = Math.max(...smoothProbs);
+    const gateTop = CLS_NAMES[smoothProbs.indexOf(gateMax)];
+    if (!inDomain && gateMax >= GATE_HI) inDomain = true;
+    else if (inDomain && gateMax < GATE_LO) inDomain = false;
 
     // 2) Detector (solo en dominio).
     let dets = [];
     let detMs = null;
-    if (gateConfident && detSession) {
+    if (inDomain && detSession) {
       const t1 = performance.now();
       const detOut = await detSession.run({ [detInput]: detTensor });
       detMs = performance.now() - t1;
       dets = nms(decodeDetections(detOut[detOutput]))
         .sort((a, b) => b.score - a.score)
         .map((d) => toSourceCoords(d, crop));
-      dets = track(dets);
-    } else if (!gateConfident) {
+      // Regla de acuerdo gate↔detector (anti-falsos-positivos en
+      // escenas arbitrarias): si el gate dice "normal" no se espera
+      // ningún defecto (se suprime todo); si dice un defecto, solo
+      // sobreviven las cajas de esa misma clase.
+      if (gateTop === "normal") dets = [];
+      else dets = dets.filter((d) => d.name === gateTop);
+      dets = track(dets).slice(0, MAX_BOXES);
+    } else if (!inDomain) {
       resetTracker();
     }
-    const shown = gateConfident ? dets : [];
+    const shown = inDomain ? dets : [];
     activeDets = shown;
 
-    showResults(smoothProbs, gateConfident, shown);
+    showResults(smoothProbs, shown);
     drawDetections(srcWidth, srcHeight, shown);
-    updateEdges(source, srcWidth, srcHeight, gateConfident, shown);
+    updateEdges(source, srcWidth, srcHeight, inDomain, shown);
 
     latencyClsEl.textContent = `${clsMs.toFixed(0)}`;
     if (detMs !== null) latencyDetEl.textContent = `${detMs.toFixed(0)}`;
@@ -708,12 +756,9 @@ async function startCamera() {
 
   // El wrapper adopta la proporción real del stream: con object-fit
   // cover y proporción coincidente nada queda recortado ni con franjas.
-  if (video.videoWidth && video.videoHeight) {
-    videoWrapper.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
-    // Variable CSS usada por el layout de pantalla completa.
-    videoWrapper.style.setProperty("--video-ar", video.videoWidth / video.videoHeight);
-  }
+  syncVideoLayout();
   smoothProbs = null;
+  inDomain = false;
   resetTracker();
   roiGuide.hidden = false;
   layoutRoi();
@@ -762,11 +807,9 @@ function stopCamera() {
   detCount.hidden = true;
   roiGuide.hidden = true;
   smoothProbs = null;
+  inDomain = false;
   resetTracker();
   activeDets = [];
-  // Quitar el marco de reconocimiento.
-  videoWrapper.classList.remove("detecting");
-  videoWrapper.style.removeProperty("--det-color");
   statusEl.textContent = "Cámara detenida.";
   btnCamera.textContent = "Activar cámara";
   setPill(badgeCam, "idle");
