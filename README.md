@@ -11,7 +11,7 @@
 
 > **Problema:** dada una imagen (o el video en vivo de una cámara) de una superficie metálica, decidir automáticamente si la pieza está en condiciones normales o presenta defectos —grietas, perforaciones, óxido o rayones— y **localizar cada defecto** con su caja y tipo, para apoyar la decisión de aceptar o reprobar la pieza en una línea de inspección de calidad.
 
-## 👥 Equipo
+## Equipo
 
 | Integrante | Rol |
 |:---|:---|
@@ -20,13 +20,13 @@
 | **Daniel Ribera Añez** | Contribuidor |
 | **Daniela Alejandra Caro Arrazola** | Contribuidora |
 
-📄 **Informe técnico (artículo científico, Entregable A):** [`informe/main.pdf`](informe/main.pdf) — fuente LaTeX en [`informe/main.tex`](informe/main.tex).
+**Informe técnico (artículo científico, Entregable A):** [`informe/main.pdf`](informe/main.pdf) — fuente LaTeX en [`informe/main.tex`](informe/main.tex).
 
 Proyecto integral de detección de objetos y clasificación multi-clase de defectos industriales en metal: combina un **Gate clasificador de dominio** (MobileNetV3-Small) y un **detector YOLOv8n en tiempo real** entrenados con aceleración por hardware (**GPU NVIDIA GeForce RTX 5060 Ti**) sobre datasets combinados sintéticos y reales.
 
 ---
 
-## 📚 Datasets, Fuentes y Créditos Académicos
+## Datasets, Fuentes y Créditos Académicos
 
 Para garantizar máxima precisión y capacidad de generalización frente a texturas reales, grano de sensor, iluminación variable y variaciones microscópicas de defectos, este proyecto integra y da crédito a las siguientes bases de datos etiquetadas:
 
@@ -54,7 +54,7 @@ Para garantizar máxima precisión y capacidad de generalización frente a textu
 
 ---
 
-## ⚡ Entrenamiento en GPU (NVIDIA GeForce RTX 5060 Ti)
+## Entrenamiento en GPU (NVIDIA GeForce RTX 5060 Ti)
 
 Todos los modelos se entrenan con aceleración de hardware dedicada:
 - **GPU:** NVIDIA GeForce RTX 5060 Ti (CUDA 13.0 / PyTorch 2.13.0).
@@ -82,7 +82,7 @@ División **80/10/10 estratificada** con semilla fija (`SEED = 42`) para garanti
 
 ---
 
-## 🤖 Arquitectura de Modelos
+## Arquitectura de Modelos
 
 | Modelo | Tipo | Rol | Parámetros / Tamaño |
 |:---|:---|:---|:---:|
@@ -94,7 +94,7 @@ División **80/10/10 estratificada** con semilla fija (`SEED = 42`) para garanti
 
 ---
 
-## 🌐 Demo Web en Tiempo Real (Cámara e Inspección)
+## Demo Web en Tiempo Real (Cámara e Inspección)
 
 Demo interactiva desplegada en GitHub Pages: **https://simonlexrs.github.io/vision-computacional/**
 
@@ -120,7 +120,7 @@ El chip superior muestra clase y confianza; el panel lateral, el conteo por clas
 
 ---
 
-## 🚀 Pipeline de Ejecución y Entrenamiento
+## Pipeline de Ejecución y Entrenamiento
 
 ### 1. Ingesta y Descarga de Datasets
 ```bash
@@ -159,7 +159,7 @@ python src/verify_detector_onnx.py --pt outputs/yolo/train/weights/best.pt --onn
 
 ---
 
-## 📈 Resultados y Métricas de Evaluación
+## Resultados y Métricas de Evaluación
 
 Evaluación sobre el split de **Test** final ($1.725$ imágenes, dataset de 3 fuentes — ver nota de versionado arriba):
 
