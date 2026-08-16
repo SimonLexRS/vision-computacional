@@ -15,7 +15,7 @@
 
 | Integrante | Rol |
 |:---|:---|
-| **Simon Alex Rodriguez Saavedra** | Integrador |
+| **Simon Alex Rodriguez Saavedra** | Líder / Integrador |
 | **Jennifer Suarez Gutierrez** | Entrenamiento de la red neuronal CNN baseline |
 | **Daniel Ribera Añez** | Contribuidor |
 | **Daniela Alejandra Caro Arrazola** | Contribuidora |
