@@ -1,0 +1,11 @@
+[
+  {
+    "date": "2026-08-16",
+    "macrostructure": "Workbench",
+    "theme": "custom",
+    "theme_axes": "dark / mono-sistema / cool-cyan",
+    "vibe": "consola HMI industrial, grafito, datos mono",
+    "enrichment": "none",
+    "brief": "Inspector de Defectos · consola de inspección en vivo (stage video + rail instrumentos)"
+  }
+]

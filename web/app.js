@@ -1,22 +1,35 @@
 /**
- * Demo web: clasificación de defectos en superficies metálicas.
+ * Demo web: detección individual de defectos en superficies metálicas.
  *
- * MobileNetV3-Small exportado a ONNX, ejecutado 100% en el navegador
- * con ONNX Runtime Web (WASM). El preprocesamiento replica el del
- * entrenamiento: resize 256×256, grayscale → 3 canales, normalización
- * ImageNet.
+ * Pipeline en dos etapas, 100% en el navegador (ONNX Runtime Web, WASM):
  *
- * El reconocimiento se muestra como un borde de color alrededor de
- * toda la imagen (un color por clase) con transición suave; si la
- * confianza es baja se muestra "Indefinido" en gris, porque el modelo
- * se entrenó con superficies metálicas y las escenas arbitrarias son
- * fuera de su dominio.
+ *   1. GATE DE DOMINIO — MobileNetV3-Small (model.onnx), clasificador de
+ *      5 clases (crack, hole, normal, rust, scratch). Si su confianza
+ *      suavizada < GATE_THRESHOLD la escena es fuera de dominio: se
+ *      reporta "Indefinido" y NO se muestra ninguna detección ni borde.
+ *      Así solo se muestran las clases para las que se entrenó el sistema.
+ *
+ *   2. DETECTOR — YOLOv8n (detector.onnx), 4 clases de defecto
+ *      (crack, hole, rust, scratch). Solo corre cuando el gate está en
+ *      dominio. Localiza y clasifica cada defecto individualmente;
+ *      decode + NMS se hacen aquí en JS. En dominio y sin detecciones
+ *      → la superficie es "Normal".
+ *
+ * La detección de bordes (Sobel) queda subordinada al detector: solo se
+ * pintan bordes DENTRO de las cajas detectadas, en el color de su clase.
+ *
+ * Preprocesamiento por modelo (mismo recorte central cuadrado 256×256):
+ *   gate     → grayscale replicado a 3 canales + normalización ImageNet.
+ *   detector → RGB /255 (como el entrenamiento de ultralytics).
  */
 
 "use strict";
 
 const IMG_SIZE = 256;
-const CLASS_NAMES = ["crack", "hole", "normal", "rust", "scratch"];
+// Orden alfabético de ImageFolder (igual que en el entrenamiento del gate).
+const CLS_NAMES = ["crack", "hole", "normal", "rust", "scratch"];
+// Clases del detector (defects.yaml). "normal" no existe: es background.
+const DET_NAMES = ["crack", "hole", "rust", "scratch"];
 const CLASS_LABELS = {
   crack: "Grieta",
   hole: "Perforación",
@@ -24,22 +37,36 @@ const CLASS_LABELS = {
   rust: "Óxido",
   scratch: "Rayón",
 };
+// RGB por clase para dibujo en canvas (mismos colores que tokens.css).
+const CLASS_RGB = {
+  crack: [255, 92, 92],
+  hole: [255, 159, 67],
+  normal: [52, 199, 123],
+  rust: [201, 123, 47],
+  scratch: [182, 120, 255],
+};
 const IMAGENET_MEAN = [0.485, 0.456, 0.406];
 const IMAGENET_STD = [0.229, 0.224, 0.225];
-const INFERENCE_INTERVAL_MS = 150;
+const TICK_MS = 200;
 // Por debajo de esta confianza suavizada la escena se considera fuera
 // de dominio y se reporta "Indefinido" en lugar de una clase al azar.
-const CONF_THRESHOLD = 0.45;
+const GATE_THRESHOLD = 0.45;
+const DET_THRESHOLD = 0.4; // score mínimo por caja del detector
+const NMS_IOU = 0.45;
 
 // --- Elementos de la UI ---
 const video = document.getElementById("video");
 const videoWrapper = document.getElementById("video-wrapper");
 const roiGuide = document.getElementById("roi-guide");
 const overlay = document.getElementById("overlay");
+const detectOverlay = document.getElementById("detect-overlay");
+const detectCtx = detectOverlay.getContext("2d");
 const placeholder = document.getElementById("placeholder");
 const chip = document.getElementById("prediction-chip");
+const chipDot = document.getElementById("chip-dot");
 const chipClass = document.getElementById("chip-class");
 const chipConf = document.getElementById("chip-conf");
+const detCount = document.getElementById("det-count");
 const btnCamera = document.getElementById("btn-camera");
 const btnEdges = document.getElementById("btn-edges");
 const btnFullscreen = document.getElementById("btn-fullscreen");
@@ -47,24 +74,44 @@ const cameraPanel = document.getElementById("camera-panel");
 const edgesOverlay = document.getElementById("edges-overlay");
 const edgesCtx = edgesOverlay.getContext("2d");
 const fileInput = document.getElementById("file-input");
-const badge = document.getElementById("engine-badge");
+const badgeCls = document.getElementById("badge-cls");
+const badgeDet = document.getElementById("badge-det");
+const badgeCam = document.getElementById("badge-cam");
 const statusEl = document.getElementById("status");
+const sysState = document.getElementById("sys-state");
+const sysStateText = document.getElementById("sys-state-text");
+const detList = document.getElementById("det-list");
+const countsEl = document.getElementById("counts");
 const fpsEl = document.getElementById("fps");
-const latencyEl = document.getElementById("latency");
+const latencyClsEl = document.getElementById("latency-cls");
+const latencyDetEl = document.getElementById("latency-det");
 const barsEl = document.getElementById("bars");
 const preprocessCanvas = document.getElementById("preprocess");
 const preprocessCtx = preprocessCanvas.getContext("2d", { willReadFrequently: true });
 
-let session = null;
+let clsSession = null;
+let detSession = null;
+let clsInput = "input";
+let clsOutput = "logits";
+let detInput = "images";
+let detOutput = "output0";
 let cameraStream = null;
-let inferenceTimer = null;
+let tickTimer = null;
 let inferenceInFlight = false;
 let frameCount = 0;
 let fpsWindowStart = performance.now();
-// Suavizado exponencial de probabilidades para estabilizar la
+// Suavizado exponencial de probabilidades del gate para estabilizar la
 // predicción en vivo (evita parpadeo entre clases frame a frame).
 let smoothProbs = null;
 const SMOOTHING = 0.3;
+// Detecciones activas (coords del frame fuente), con seguimiento
+// temporal ligero contra parpadeo.
+let activeDets = [];
+let prevDets = [];
+let edgesOn = false;
+// Última imagen estática analizada (para re-correr el pipeline al
+// activar "Bordes por detección" sin cámara).
+let lastStaticSource = null;
 
 // Ajusta el marco de "zona de análisis" al cuadrado central del
 // wrapper (es exactamente la región que recorta el preprocesamiento).
@@ -76,17 +123,26 @@ function layoutRoi() {
 
 window.addEventListener("resize", layoutRoi);
 
-// --- Barras de probabilidad ---
+// --- Pills de estado ---
+function setPill(el, state) {
+  // state: "loading" | "ready" | "error" | "idle"
+  el.classList.remove("is-loading", "is-ready", "is-error");
+  if (state === "loading") el.classList.add("is-loading");
+  if (state === "ready") el.classList.add("is-ready");
+  if (state === "error") el.classList.add("is-error");
+}
+
+// --- Barras de probabilidad del gate ---
 const barFills = {};
 const barValues = {};
 
 function buildBars() {
-  for (const name of CLASS_NAMES) {
+  for (const name of CLS_NAMES) {
     const row = document.createElement("li");
     row.className = "bar-row";
     row.innerHTML = `
       <span class="bar-label">${CLASS_LABELS[name]}</span>
-      <div class="bar-track"><div class="bar-fill" style="background: var(--${name})"></div></div>
+      <div class="bar-track"><div class="bar-fill" style="background: var(--color-${name})"></div></div>
       <span class="bar-value">0%</span>
     `;
     barsEl.appendChild(row);
@@ -96,47 +152,116 @@ function buildBars() {
 }
 
 function updateBars(probs) {
-  CLASS_NAMES.forEach((name, i) => {
+  CLS_NAMES.forEach((name, i) => {
     const pct = probs[i] * 100;
     barFills[name].style.width = `${pct}%`;
     barValues[name].textContent = `${pct.toFixed(1)}%`;
   });
 }
 
-// --- Carga del modelo ONNX ---
-async function loadModel() {
-  try {
-    // ONNX Runtime Web auto-hospedado en vendor/ort/ (sin CDN).
-    // Se usa document.baseURI: el loader jsep se importa como módulo ES y
-    // las rutas relativas se resolverían contra la carpeta del bundle.
-    ort.env.wasm.wasmPaths = new URL("vendor/ort/", document.baseURI).href;
-    session = await ort.InferenceSession.create("model.onnx", {
-      executionProviders: ["wasm"],
-    });
-    badge.textContent = "modelo listo";
-    badge.classList.add("ready");
-  } catch (err) {
-    console.error(err);
-    badge.textContent = "error al cargar el modelo";
-    badge.classList.add("error");
-    statusEl.textContent = "No se pudo cargar model.onnx: " + err.message;
+// --- Conteo por clase (detector) ---
+const countNums = {};
+
+function buildCounts() {
+  for (const name of DET_NAMES) {
+    const cell = document.createElement("div");
+    cell.className = "count-cell";
+    cell.innerHTML = `
+      <span class="count-num" style="color: var(--color-${name})">0</span>
+      <span class="count-label">${CLASS_LABELS[name]}</span>
+    `;
+    countsEl.appendChild(cell);
+    countNums[name] = cell.querySelector(".count-num");
   }
 }
 
-// --- Preprocesamiento (idéntico al entrenamiento) ---
-// Dibuja una región cuadrada del source en el canvas 256×256 y
-// devuelve sus píxeles RGBA.
+function updateCounts(dets) {
+  const tally = Object.fromEntries(DET_NAMES.map((n) => [n, 0]));
+  for (const d of dets) tally[d.name]++;
+  for (const name of DET_NAMES) countNums[name].textContent = tally[name];
+}
+
+// --- Lista de detecciones activas ---
+function updateDetList(dets) {
+  detList.innerHTML = "";
+  if (!dets.length) {
+    detList.innerHTML = '<li class="det-empty">— sin detecciones —</li>';
+    return;
+  }
+  for (const d of dets.slice(0, 8)) {
+    const row = document.createElement("li");
+    row.className = "det-row";
+    row.innerHTML = `
+      <span class="pill-dot" style="background: var(--color-${d.name})"></span>
+      <span class="det-name">${CLASS_LABELS[d.name]}</span>
+      <span class="det-conf">${(d.score * 100).toFixed(1)}%</span>
+    `;
+    detList.appendChild(row);
+  }
+}
+
+// --- Carga de los modelos ONNX ---
+// `modelsReady` se resuelve cuando ambos intentos terminaron (éxito o
+// error): la imagen estática espera aquí antes de analizarse.
+let modelsReady;
+
+async function loadModels() {
+  // ONNX Runtime Web auto-hospedado en vendor/ort/ (sin CDN).
+  // Se usa document.baseURI: el loader jsep se importa como módulo ES y
+  // las rutas relativas se resolverían contra la carpeta del bundle.
+  ort.env.wasm.wasmPaths = new URL("vendor/ort/", document.baseURI).href;
+
+  const jobs = [
+    ort.InferenceSession.create("model.onnx", { executionProviders: ["wasm"] })
+      .then((s) => {
+        clsSession = s;
+        clsInput = s.inputNames[0];
+        clsOutput = s.outputNames[0];
+        setPill(badgeCls, "ready");
+      })
+      .catch((err) => {
+        console.error("gate:", err);
+        setPill(badgeCls, "error");
+        statusEl.textContent = "No se pudo cargar model.onnx: " + err.message;
+      }),
+    ort.InferenceSession.create("detector.onnx", { executionProviders: ["wasm"] })
+      .then((s) => {
+        detSession = s;
+        detInput = s.inputNames[0];
+        detOutput = s.outputNames[0];
+        setPill(badgeDet, "ready");
+      })
+      .catch((err) => {
+        console.error("detector:", err);
+        setPill(badgeDet, "error");
+        statusEl.textContent = "No se pudo cargar detector.onnx: " + err.message;
+      }),
+  ];
+  await Promise.all(jobs);
+}
+
+// runTick se omite silenciosamente si el gate aún no cargó; para
+// fuentes estáticas (sin ticks periódicos) hay que esperar a los modelos.
+function runTickWhenReady(source, w, h) {
+  if (clsSession) {
+    runTick(source, w, h);
+  } else {
+    modelsReady.then(() => runTick(source, w, h));
+  }
+}
+
+// --- Preprocesamiento ---
+// Un solo draw del recorte central cuadrado a 256×256 alimenta los dos
+// tensores (cada modelo normaliza distinto).
 function drawRegionToCanvas(source, sx, sy, side) {
   preprocessCtx.drawImage(source, sx, sy, side, side, 0, 0, IMG_SIZE, IMG_SIZE);
   return preprocessCtx.getImageData(0, 0, IMG_SIZE, IMG_SIZE).data;
 }
 
-// Convierte píxeles RGBA a tensor normalizado (grayscale → 3 canales,
-// normalización ImageNet, layout CHW).
-function pixelsToTensor(pixels, target) {
+// Gate: grayscale (luminosidad) replicado a 3 canales, norm. ImageNet, CHW.
+function pixelsToClsTensor(pixels, target) {
   const plane = IMG_SIZE * IMG_SIZE;
   for (let i = 0; i < plane; i++) {
-    // Grayscale (luminosidad), replicado a 3 canales.
     const r = pixels[i * 4] / 255;
     const g = pixels[i * 4 + 1] / 255;
     const b = pixels[i * 4 + 2] / 255;
@@ -148,6 +273,16 @@ function pixelsToTensor(pixels, target) {
   }
 }
 
+// Detector: RGB /255, CHW (preproceso de ultralytics).
+function pixelsToDetTensor(pixels, target) {
+  const plane = IMG_SIZE * IMG_SIZE;
+  for (let i = 0; i < plane; i++) {
+    target[i] = pixels[i * 4] / 255;
+    target[plane + i] = pixels[i * 4 + 1] / 255;
+    target[2 * plane + i] = pixels[i * 4 + 2] / 255;
+  }
+}
+
 function preprocess(source, srcWidth, srcHeight) {
   // Recorte central cuadrado, como imagen completa encuadrada.
   const side = Math.min(srcWidth, srcHeight);
@@ -155,10 +290,16 @@ function preprocess(source, srcWidth, srcHeight) {
   const sy = (srcHeight - side) / 2;
 
   const pixels = drawRegionToCanvas(source, sx, sy, side);
-  const tensor = new Float32Array(3 * IMG_SIZE * IMG_SIZE);
-  pixelsToTensor(pixels, tensor);
+  const clsData = new Float32Array(3 * IMG_SIZE * IMG_SIZE);
+  const detData = new Float32Array(3 * IMG_SIZE * IMG_SIZE);
+  pixelsToClsTensor(pixels, clsData);
+  pixelsToDetTensor(pixels, detData);
 
-  return new ort.Tensor("float32", tensor, [1, 3, IMG_SIZE, IMG_SIZE]);
+  return {
+    clsTensor: new ort.Tensor("float32", clsData, [1, 3, IMG_SIZE, IMG_SIZE]),
+    detTensor: new ort.Tensor("float32", detData, [1, 3, IMG_SIZE, IMG_SIZE]),
+    crop: { sx, sy, side },
+  };
 }
 
 function softmax(logits) {
@@ -168,72 +309,254 @@ function softmax(logits) {
   return exps.map((x) => x / sum);
 }
 
-// Publica la predicción en la UI: chip, borde de color alrededor de
-// toda la imagen y barras.
-function showPrediction(probs) {
-  const bestIdx = probs.indexOf(Math.max(...probs));
-  const bestName = CLASS_NAMES[bestIdx];
-  const bestConf = probs[bestIdx];
-  const confident = bestConf >= CONF_THRESHOLD;
+// --- Decode del detector (YOLOv8 [1, 4+nc, N]) + NMS en JS ---
+function decodeDetections(tensor) {
+  const [, channels, n] = tensor.dims; // [1, 8, N]
+  const d = tensor.data;
+  const dets = [];
+  for (let i = 0; i < n; i++) {
+    let bestCls = 0;
+    let bestScore = 0;
+    for (let c = 0; c < channels - 4; c++) {
+      const s = d[(4 + c) * n + i];
+      if (s > bestScore) {
+        bestScore = s;
+        bestCls = c;
+      }
+    }
+    if (bestScore < DET_THRESHOLD) continue;
+    const cx = d[i];
+    const cy = d[n + i];
+    const w = d[2 * n + i];
+    const h = d[3 * n + i];
+    dets.push({
+      x1: cx - w / 2,
+      y1: cy - h / 2,
+      x2: cx + w / 2,
+      y2: cy + h / 2,
+      score: bestScore,
+      cls: bestCls,
+    });
+  }
+  return dets;
+}
 
-  // Borde completo de la imagen en el color de la clase (gris si la
-  // confianza es baja: escena fuera del dominio del modelo).
-  videoWrapper.style.setProperty(
-    "--det-color",
-    confident ? `var(--${bestName})` : "var(--muted)"
-  );
+function iou(a, b) {
+  const xx1 = Math.max(a.x1, b.x1);
+  const yy1 = Math.max(a.y1, b.y1);
+  const xx2 = Math.min(a.x2, b.x2);
+  const yy2 = Math.min(a.y2, b.y2);
+  const inter = Math.max(0, xx2 - xx1) * Math.max(0, yy2 - yy1);
+  const areaA = (a.x2 - a.x1) * (a.y2 - a.y1);
+  const areaB = (b.x2 - b.x1) * (b.y2 - b.y1);
+  return inter / (areaA + areaB - inter + 1e-9);
+}
+
+function nms(dets) {
+  const order = [...dets].sort((a, b) => b.score - a.score);
+  const keep = [];
+  for (const d of order) {
+    if (keep.every((k) => k.cls !== d.cls || iou(k, d) <= NMS_IOU)) keep.push(d);
+  }
+  return keep;
+}
+
+// De coordenadas del tensor 256×256 a coordenadas del frame fuente.
+function toSourceCoords(d, crop) {
+  const scale = crop.side / IMG_SIZE;
+  return {
+    x1: crop.sx + d.x1 * scale,
+    y1: crop.sy + d.y1 * scale,
+    x2: crop.sx + d.x2 * scale,
+    y2: crop.sy + d.y2 * scale,
+    score: d.score,
+    cls: d.cls,
+    name: DET_NAMES[d.cls],
+  };
+}
+
+// Seguimiento temporal ligero: empareja por clase + IoU y suaviza
+// coords/score; las no emparejadas sobreviven un tick con decay.
+function track(dets) {
+  const used = new Set();
+  const out = dets.map((d) => {
+    let best = -1;
+    let bestIou = 0.3; // umbral de emparejamiento
+    prevDets.forEach((p, j) => {
+      if (used.has(j) || p.name !== d.name) return;
+      const v = iou(d, p);
+      if (v > bestIou) {
+        bestIou = v;
+        best = j;
+      }
+    });
+    if (best >= 0) {
+      used.add(best);
+      const p = prevDets[best];
+      const mix = (a, b) => 0.5 * a + 0.5 * b;
+      return {
+        x1: mix(d.x1, p.x1), y1: mix(d.y1, p.y1),
+        x2: mix(d.x2, p.x2), y2: mix(d.y2, p.y2),
+        score: mix(d.score, p.score), cls: d.cls, name: d.name, misses: 0,
+      };
+    }
+    return { ...d, misses: 0 };
+  });
+  // Retener una vez las detecciones que el detector "parpadeó".
+  prevDets.forEach((p, j) => {
+    if (used.has(j) || p.misses > 0) return;
+    const decayed = { ...p, score: p.score * 0.6, misses: 1 };
+    if (decayed.score >= 0.25) out.push(decayed);
+  });
+  prevDets = out;
+  return out;
+}
+
+function resetTracker() {
+  prevDets = [];
+}
+
+// --- Publicación en la UI ---
+function showResults(probs, gateConfident, dets) {
+  const bestIdx = probs.indexOf(Math.max(...probs));
+  const gateName = CLS_NAMES[bestIdx];
+  const gateConf = probs[bestIdx];
+
+  let detColor = "var(--color-oos)";
+  let label = "Indefinido";
+  let confText = `${(gateConf * 100).toFixed(1)}%`;
+
+  if (gateConfident && dets.length) {
+    const top = dets[0]; // vienen ordenados por score tras NMS+track
+    detColor = `var(--color-${top.name})`;
+    label = CLASS_LABELS[top.name];
+    confText = `${(top.score * 100).toFixed(1)}%`;
+  } else if (gateConfident) {
+    detColor = "var(--color-normal)";
+    label = "Normal — sin defectos";
+    confText = `${(gateConf * 100).toFixed(1)}%`;
+  }
+
+  // Marco del wrapper en el color de estado (gris si fuera de dominio).
+  videoWrapper.style.setProperty("--det-color", detColor);
   videoWrapper.classList.add("detecting");
 
   chip.hidden = false;
-  chipClass.textContent = confident ? CLASS_LABELS[bestName] : "Indefinido";
-  chipClass.style.color = confident ? `var(--${bestName})` : "var(--muted)";
-  chipConf.textContent = `${(bestConf * 100).toFixed(1)}%`;
+  chipClass.textContent = label;
+  chipClass.style.color = detColor;
+  chipConf.textContent = confText;
+
+  // Contador de defectos.
+  const showCount = gateConfident && dets.length > 0;
+  detCount.hidden = !showCount;
+  if (showCount) {
+    detCount.textContent = `${dets.length} defecto${dets.length > 1 ? "s" : ""}`;
+  }
+
+  // Estado del sistema.
+  sysState.classList.remove("is-idle", "is-in", "is-out");
+  if (gateConfident) {
+    sysState.classList.add("is-in");
+    sysStateText.textContent = "En dominio — inspeccionando";
+  } else {
+    sysState.classList.add("is-out");
+    sysStateText.textContent = "Fuera de dominio";
+  }
 
   updateBars(probs);
+  updateCounts(gateConfident ? dets : []);
+  updateDetList(gateConfident ? dets : []);
 }
 
-// --- Detección de bordes en vivo (Sobel sobre canvas, superpuesta al video) ---
-// Equivalente práctico de Canny para visualización en vivo: el
-// downscale del drawImage ya actúa como suavizado, luego magnitud de
-// Sobel + umbral. Barato en CPU (~384 px de ancho, loop por rAF).
-// Los bordes se dibujan en cian sobre un canvas transparente que
-// cubre exactamente el video (mismo posicionamiento que #overlay).
+// --- Dibujo de cajas (esquinas tipo target, estilo HMI) ---
+function drawDetections(srcWidth, srcHeight, dets) {
+  if (!dets.length) {
+    detectCtx.clearRect(0, 0, detectOverlay.width, detectOverlay.height);
+    detectOverlay.hidden = true;
+    return;
+  }
+  if (detectOverlay.width !== srcWidth || detectOverlay.height !== srcHeight) {
+    detectOverlay.width = srcWidth;
+    detectOverlay.height = srcHeight;
+  }
+  detectOverlay.hidden = false;
+  const ctx = detectCtx;
+  ctx.clearRect(0, 0, srcWidth, srcHeight);
+
+  const fontPx = Math.max(12, Math.round(srcHeight / 26));
+  ctx.font = `600 ${fontPx}px ui-monospace, Consolas, monospace`;
+  ctx.lineWidth = Math.max(2, Math.round(srcHeight / 300));
+
+  for (const d of dets) {
+    const [r, g, b] = CLASS_RGB[d.name];
+    const color = `rgb(${r} ${g} ${b})`;
+    const w = d.x2 - d.x1;
+    const h = d.y2 - d.y1;
+    const arm = Math.max(10, Math.min(w, h) * 0.3); // largo de esquina
+
+    ctx.strokeStyle = color;
+    ctx.beginPath(); // 4 esquinas tipo target
+    ctx.moveTo(d.x1, d.y1 + arm); ctx.lineTo(d.x1, d.y1); ctx.lineTo(d.x1 + arm, d.y1);
+    ctx.moveTo(d.x2 - arm, d.y1); ctx.lineTo(d.x2, d.y1); ctx.lineTo(d.x2, d.y1 + arm);
+    ctx.moveTo(d.x2, d.y2 - arm); ctx.lineTo(d.x2, d.y2); ctx.lineTo(d.x2 - arm, d.y2);
+    ctx.moveTo(d.x1 + arm, d.y2); ctx.lineTo(d.x1, d.y2); ctx.lineTo(d.x1, d.y2 - arm);
+    ctx.stroke();
+
+    // Etiqueta "Clase 92%" sobre la esquina superior izquierda.
+    const text = `${CLASS_LABELS[d.name]} ${(d.score * 100).toFixed(0)}%`;
+    const tw = ctx.measureText(text).width;
+    const pad = fontPx * 0.35;
+    const tx = d.x1;
+    const ty = d.y1 - fontPx - pad * 2 >= 0 ? d.y1 - fontPx - pad * 2 : d.y1;
+    ctx.fillStyle = "rgba(8, 11, 16, 0.85)";
+    ctx.fillRect(tx, ty, tw + pad * 2, fontPx + pad * 2);
+    ctx.fillStyle = color;
+    ctx.fillText(text, tx + pad, ty + pad + fontPx * 0.78);
+  }
+}
+
+// --- Detección de bordes subordinada al detector ---
+// Sobel sobre el frame completo, pero SOLO se pintan los píxeles de
+// borde que caen dentro de una caja detectada, en el color de su clase.
+// Sin detecciones (o fuera de dominio) → overlay limpio: el sistema no
+// "detecta todo", solo muestra las clases entrenadas.
 const EDGES_WIDTH = 384;
-const EDGE_THRESHOLD = 80; // magnitud Sobel mínima (0-1020); subir = menos ruido
-const EDGE_COLOR = [56, 225, 255]; // cian brillante
+const EDGE_THRESHOLD = 80; // magnitud Sobel mínima (0-1020)
 const edgeSrc = document.createElement("canvas");
 const edgeSrcCtx = edgeSrc.getContext("2d", { willReadFrequently: true });
-let edgesOn = false;
-let edgesRaf = 0;
-let edgeGray = null; // buffers reutilizados (sin allocations por frame)
+let edgeGray = null; // buffers reutilizados (sin allocations por tick)
+let edgeMag = null;
 let edgeOut = null;
 
-function computeEdges() {
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-  if (!vw || !vh) return;
+function updateEdges(source, srcWidth, srcHeight, gateConfident, dets) {
+  if (!edgesOn || !gateConfident || !dets.length) {
+    edgesCtx.clearRect(0, 0, edgesOverlay.width, edgesOverlay.height);
+    edgesOverlay.hidden = true;
+    return;
+  }
+
   const aw = EDGES_WIDTH;
-  const ah = Math.max(1, Math.round((EDGES_WIDTH * vh) / vw));
+  const ah = Math.max(1, Math.round((EDGES_WIDTH * srcHeight) / srcWidth));
   if (edgeSrc.width !== aw || edgeSrc.height !== ah) {
     edgeSrc.width = aw;
     edgeSrc.height = ah;
     edgesOverlay.width = aw;
     edgesOverlay.height = ah;
     edgeGray = new Float32Array(aw * ah);
+    edgeMag = new Float32Array(aw * ah);
     edgeOut = edgesCtx.createImageData(aw, ah);
   }
 
-  edgeSrcCtx.drawImage(video, 0, 0, aw, ah);
+  edgeSrcCtx.drawImage(source, 0, 0, aw, ah);
   const sd = edgeSrcCtx.getImageData(0, 0, aw, ah).data;
-  const od = edgeOut.data;
   const g = edgeGray;
+  const mag = edgeMag;
+  const od = edgeOut.data;
 
   for (let i = 0; i < aw * ah; i++) {
     g[i] = 0.299 * sd[i * 4] + 0.587 * sd[i * 4 + 1] + 0.114 * sd[i * 4 + 2];
   }
-
-  // Fondo transparente; solo los píxeles de borde se pintan en cian.
-  od.fill(0);
+  mag.fill(0);
   for (let y = 1; y < ah - 1; y++) {
     for (let x = 1; x < aw - 1; x++) {
       const i = y * aw + x;
@@ -243,64 +566,107 @@ function computeEdges() {
       const gy =
         -g[i - aw - 1] - 2 * g[i - aw] - g[i - aw + 1] +
         g[i + aw - 1] + 2 * g[i + aw] + g[i + aw + 1];
-      if (Math.abs(gx) + Math.abs(gy) > EDGE_THRESHOLD) {
-        const j = i * 4;
-        od[j] = EDGE_COLOR[0];
-        od[j + 1] = EDGE_COLOR[1];
-        od[j + 2] = EDGE_COLOR[2];
-        od[j + 3] = 255;
+      mag[i] = Math.abs(gx) + Math.abs(gy);
+    }
+  }
+
+  // Pintar solo dentro de cada caja, con el color de su clase.
+  const sx = aw / srcWidth;
+  const sy = ah / srcHeight;
+  od.fill(0);
+  for (const d of dets) {
+    const [r, gg, bb] = CLASS_RGB[d.name];
+    const bx1 = Math.max(1, Math.floor(d.x1 * sx));
+    const by1 = Math.max(1, Math.floor(d.y1 * sy));
+    const bx2 = Math.min(aw - 1, Math.ceil(d.x2 * sx));
+    const by2 = Math.min(ah - 1, Math.ceil(d.y2 * sy));
+    for (let y = by1; y < by2; y++) {
+      for (let x = bx1; x < bx2; x++) {
+        const i = y * aw + x;
+        if (mag[i] > EDGE_THRESHOLD) {
+          const j = i * 4;
+          od[j] = r;
+          od[j + 1] = gg;
+          od[j + 2] = bb;
+          od[j + 3] = 255;
+        }
       }
     }
   }
+  edgesOverlay.hidden = false;
   edgesCtx.putImageData(edgeOut, 0, 0);
 }
 
-function edgesLoop() {
-  if (!edgesOn) return;
-  if (video.readyState >= 2) computeEdges();
-  edgesRaf = requestAnimationFrame(edgesLoop);
+function hasSource() {
+  // Hay algo que analizar: stream de cámara o imagen subida visible.
+  return !!cameraStream || !overlay.hidden;
 }
 
 function setEdges(on) {
-  edgesOn = on && !!cameraStream;
-  btnEdges.disabled = !cameraStream;
-  btnEdges.classList.toggle("active", edgesOn);
-  btnEdges.textContent = edgesOn ? "Ocultar bordes" : "Detección de bordes";
-  edgesOverlay.hidden = !edgesOn;
-  if (edgesOn) {
-    edgesLoop();
-  } else {
-    cancelAnimationFrame(edgesRaf);
+  edgesOn = on && hasSource();
+  btnEdges.disabled = !hasSource();
+  btnEdges.classList.toggle("is-on", edgesOn);
+  btnEdges.textContent = edgesOn ? "Ocultar bordes" : "Bordes por detección";
+  if (!edgesOn) {
     edgesCtx.clearRect(0, 0, edgesOverlay.width, edgesOverlay.height);
+    edgesOverlay.hidden = true;
+  } else if (!cameraStream && lastStaticSource) {
+    // Imagen estática: no hay ticks periódicos, re-analizar una vez
+    // para pintar (o limpiar) los bordes de inmediato.
+    runTickWhenReady(lastStaticSource.img, lastStaticSource.w, lastStaticSource.h);
   }
 }
 
-// --- Inferencia ---
-async function runInference(source, srcWidth, srcHeight) {
-  // Guard anti-solapamiento: si la inferencia anterior no terminó,
-  // se omite este tick (evita ejecuciones concurrentes acumuladas).
-  if (!session || inferenceInFlight) return;
+// --- Tick de inferencia (gate → detector → UI) ---
+async function runTick(source, srcWidth, srcHeight) {
+  // Guard anti-solapamiento: si el tick anterior no terminó, se omite
+  // (evita ejecuciones concurrentes acumuladas).
+  if (!clsSession || inferenceInFlight) return;
   inferenceInFlight = true;
 
   try {
-    const input = preprocess(source, srcWidth, srcHeight);
+    const { clsTensor, detTensor, crop } = preprocess(source, srcWidth, srcHeight);
 
+    // 1) Gate de dominio.
     const t0 = performance.now();
-    const output = await session.run({ input });
-    const latency = performance.now() - t0;
+    const clsOut = await clsSession.run({ [clsInput]: clsTensor });
+    const clsMs = performance.now() - t0;
 
-    const probs = softmax(Array.from(output.logits.data));
+    const probs = softmax(Array.from(clsOut[clsOutput].data));
     smoothProbs = smoothProbs
       ? probs.map((p, i) => SMOOTHING * p + (1 - SMOOTHING) * smoothProbs[i])
       : probs;
+    const gateConfident = Math.max(...smoothProbs) >= GATE_THRESHOLD;
 
-    showPrediction(smoothProbs);
-    latencyEl.textContent = `Inferencia: ${latency.toFixed(0)} ms`;
+    // 2) Detector (solo en dominio).
+    let dets = [];
+    let detMs = null;
+    if (gateConfident && detSession) {
+      const t1 = performance.now();
+      const detOut = await detSession.run({ [detInput]: detTensor });
+      detMs = performance.now() - t1;
+      dets = nms(decodeDetections(detOut[detOutput]))
+        .sort((a, b) => b.score - a.score)
+        .map((d) => toSourceCoords(d, crop));
+      dets = track(dets);
+    } else if (!gateConfident) {
+      resetTracker();
+    }
+    const shown = gateConfident ? dets : [];
+    activeDets = shown;
+
+    showResults(smoothProbs, gateConfident, shown);
+    drawDetections(srcWidth, srcHeight, shown);
+    updateEdges(source, srcWidth, srcHeight, gateConfident, shown);
+
+    latencyClsEl.textContent = `${clsMs.toFixed(0)}`;
+    if (detMs !== null) latencyDetEl.textContent = `${detMs.toFixed(0)}`;
+    else latencyDetEl.textContent = "—";
 
     frameCount++;
     const now = performance.now();
     if (now - fpsWindowStart >= 1000) {
-      fpsEl.textContent = `FPS: ${((frameCount * 1000) / (now - fpsWindowStart)).toFixed(1)}`;
+      fpsEl.textContent = ((frameCount * 1000) / (now - fpsWindowStart)).toFixed(1);
       frameCount = 0;
       fpsWindowStart = now;
     }
@@ -333,6 +699,7 @@ async function startCamera() {
   }
 
   stopUploadedImage();
+  lastStaticSource = null;
   video.srcObject = cameraStream;
   video.hidden = false;
   overlay.hidden = true;
@@ -347,20 +714,25 @@ async function startCamera() {
     videoWrapper.style.setProperty("--video-ar", video.videoWidth / video.videoHeight);
   }
   smoothProbs = null;
+  resetTracker();
   roiGuide.hidden = false;
   layoutRoi();
 
-  statusEl.textContent = "Cámara activa — analizando en vivo.";
+  statusEl.textContent = "Cámara activa — inspeccionando en vivo.";
   btnCamera.textContent = "Detener cámara";
   btnCamera.disabled = false;
   btnEdges.disabled = false;
+  setPill(badgeCam, "ready");
+  sysState.classList.remove("is-idle");
+  sysState.classList.add("is-out");
+  sysStateText.textContent = "Fuera de dominio";
 
-  clearInterval(inferenceTimer);
-  inferenceTimer = setInterval(() => {
+  clearInterval(tickTimer);
+  tickTimer = setInterval(() => {
     if (video.readyState >= 2) {
-      runInference(video, video.videoWidth, video.videoHeight);
+      runTick(video, video.videoWidth, video.videoHeight);
     }
-  }, INFERENCE_INTERVAL_MS);
+  }, TICK_MS);
 
   // Gancho de prueba automatizada: ?edges=1 activa la vista de bordes.
   if (new URLSearchParams(location.search).has("edges")) {
@@ -369,36 +741,75 @@ async function startCamera() {
 }
 
 function stopCamera() {
-  clearInterval(inferenceTimer);
-  inferenceTimer = null;
+  clearInterval(tickTimer);
+  tickTimer = null;
   if (cameraStream) {
     cameraStream.getTracks().forEach((t) => t.stop());
     cameraStream = null;
   }
   // Reset de la vista de bordes (requiere cámara activa).
   edgesOn = false;
-  cancelAnimationFrame(edgesRaf);
   edgesOverlay.hidden = true;
   edgesCtx.clearRect(0, 0, edgesOverlay.width, edgesOverlay.height);
   btnEdges.disabled = true;
-  btnEdges.classList.remove("active");
-  btnEdges.textContent = "Detección de bordes";
+  btnEdges.classList.remove("is-on");
+  btnEdges.textContent = "Bordes por detección";
+  detectOverlay.hidden = true;
+  detectCtx.clearRect(0, 0, detectOverlay.width, detectOverlay.height);
   video.srcObject = null;
   placeholder.style.display = "flex";
   chip.hidden = true;
+  detCount.hidden = true;
   roiGuide.hidden = true;
   smoothProbs = null;
-  // Quitar el borde de reconocimiento.
+  resetTracker();
+  activeDets = [];
+  // Quitar el marco de reconocimiento.
   videoWrapper.classList.remove("detecting");
   videoWrapper.style.removeProperty("--det-color");
   statusEl.textContent = "Cámara detenida.";
   btnCamera.textContent = "Activar cámara";
-  fpsEl.textContent = "FPS: —";
+  setPill(badgeCam, "idle");
+  sysState.classList.remove("is-in", "is-out");
+  sysState.classList.add("is-idle");
+  sysStateText.textContent = "Esperando entrada";
+  fpsEl.textContent = "—";
+  latencyClsEl.textContent = "—";
+  latencyDetEl.textContent = "—";
 }
 
 // --- Subir imagen (fallback sin cámara) ---
 function stopUploadedImage() {
   overlay.hidden = true;
+}
+
+// Muestra y analiza una imagen estática (misma ruta para upload y para
+// el gancho de prueba ?imgtest=).
+function analyzeImage(img, name) {
+  // Mostrar la imagen en el área del video.
+  if (cameraStream) stopCamera();
+  video.hidden = true;
+
+  // El overlay se dibuja a la resolución de la imagen (tope 1024 px)
+  // y el wrapper adopta su proporción: object-fit cover sin cortes.
+  const scale = Math.min(1, 1024 / Math.max(img.width, img.height));
+  overlay.width = Math.round(img.width * scale);
+  overlay.height = Math.round(img.height * scale);
+  const ctx = overlay.getContext("2d");
+  ctx.drawImage(img, 0, 0, overlay.width, overlay.height);
+  overlay.hidden = false;
+  placeholder.style.display = "none";
+  videoWrapper.style.aspectRatio = `${overlay.width} / ${overlay.height}`;
+  videoWrapper.style.setProperty("--video-ar", overlay.width / overlay.height);
+  smoothProbs = null;
+  resetTracker();
+  roiGuide.hidden = false;
+  layoutRoi();
+  lastStaticSource = { img, w: img.width, h: img.height };
+  btnEdges.disabled = false;
+
+  runTickWhenReady(img, img.width, img.height);
+  statusEl.textContent = "Imagen analizada: " + name;
 }
 
 function handleUpload(event) {
@@ -408,27 +819,7 @@ function handleUpload(event) {
   const url = URL.createObjectURL(file);
   const img = new Image();
   img.onload = () => {
-    // Mostrar la imagen en el área del video.
-    if (cameraStream) stopCamera();
-    video.hidden = true;
-
-    // El overlay se dibuja a la resolución de la imagen (tope 1024 px)
-    // y el wrapper adopta su proporción: object-fit cover sin cortes.
-    const scale = Math.min(1, 1024 / Math.max(img.width, img.height));
-    overlay.width = Math.round(img.width * scale);
-    overlay.height = Math.round(img.height * scale);
-    const ctx = overlay.getContext("2d");
-    ctx.drawImage(img, 0, 0, overlay.width, overlay.height);
-    overlay.hidden = false;
-    placeholder.style.display = "none";
-    videoWrapper.style.aspectRatio = `${overlay.width} / ${overlay.height}`;
-    videoWrapper.style.setProperty("--video-ar", overlay.width / overlay.height);
-    smoothProbs = null;
-    roiGuide.hidden = false;
-    layoutRoi();
-
-    runInference(img, img.width, img.height);
-    statusEl.textContent = "Imagen analizada: " + file.name;
+    analyzeImage(img, file.name);
     URL.revokeObjectURL(url);
   };
   img.src = url;
@@ -437,7 +828,8 @@ function handleUpload(event) {
 
 // --- Init ---
 buildBars();
-loadModel();
+buildCounts();
+modelsReady = loadModels();
 btnCamera.addEventListener("click", () => {
   if (cameraStream) stopCamera();
   else startCamera();
@@ -466,6 +858,20 @@ document.addEventListener("fullscreenchange", () => {
 
 // Gancho de prueba automatizada: ?autocam=1 activa la cámara sin clic
 // (se usa con --use-fake-device-for-media-stream en tests headless).
-if (new URLSearchParams(location.search).has("autocam")) {
+const urlParams = new URLSearchParams(location.search);
+if (urlParams.has("autocam")) {
   startCamera();
+}
+
+// Gancho de prueba: ?imgtest=<ruta> analiza una imagen servida por el
+// propio host (p. ej. capturas del split test), sin cámara ni diálogo.
+// Se puede combinar con &edges=1 para activar la vista de bordes.
+const imgtest = urlParams.get("imgtest");
+if (imgtest) {
+  const img = new Image();
+  img.onload = () => {
+    analyzeImage(img, imgtest);
+    if (urlParams.has("edges")) setEdges(true);
+  };
+  img.src = imgtest;
 }

@@ -21,3 +21,5 @@ onnxruntime==1.28.0
 onnxscript==0.7.1
 # Edge detection en vivo con cámara (src/edge_detection.py)
 opencv-python==4.12.0.88
+# Detector YOLOv8n para la demo web (src/train_yolo.py)
+ultralytics==8.4.120

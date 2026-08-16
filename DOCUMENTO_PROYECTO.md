@@ -106,7 +106,7 @@ Estos campos permiten análisis secundarios (robustez ante textura/iluminación,
 1. **Datos sintéticos:** facilitan volumen y balance, pero puede existir *sim-to-real gap* si se despliega en piezas reales.
 2. **Transfer learning:** los pesos ImageNet esperan 3 canales; conviene replicar el canal grayscale a RGB (`L → RGB`) o adaptar la primera capa convolucional.
 3. **Sin split test oficial:** el dataset solo define `train`/`val`. Para reporte final se puede reservar un hold-out desde `train` o tratar `val` como test y validar con cross-validation estratificada.
-4. **Sin máscaras de segmentación:** no es un dataset de detección/segmentación por diseño; `defect_positions` permite experimentos exploratorios de localización, no un benchmark de detección estándar.
+4. **Sin máscaras de segmentación:** no es un dataset de detección/segmentación por diseño. Aun así, `defect_positions` / `defect_sizes_px` permitieron derivar bounding boxes aproximadas (refinadas con segmentación OpenCV) con las que se entrenó un detector YOLOv8n para la demo web — con reservas metodológicas: las métricas de detección son exploratorias, no un benchmark estándar.
 
 ---
 
@@ -145,7 +145,7 @@ Protocolo común:
 
 - **ConvNeXt / ViT:** si el baseline CNN ya satura y se busca empujar accuracy o un estudio de arquitecturas.
 - **PatchCore / PaDiM:** si el interés industrial es “¿hay anomalía?” sin tipificar el defecto, o para comparar supervisión completa vs detección de anomalías.
-- **Segmentación / detección (U-Net, YOLO):** fuera del alcance natural del dataset (no hay máscaras/bboxes COCO); solo con etiquetas derivadas de metadata y con reservas metodológicas.
+- **Segmentación / detección (U-Net, YOLO):** implementada a nivel exploratorio en la demo web: YOLOv8n entrenado con etiquetas derivadas de metadata (`src/train_yolo.py`), con las reservas metodológicas de la sección 3.3.
 
 ---
 

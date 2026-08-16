@@ -31,9 +31,25 @@ Entrenamiento con pesos ImageNet (la CNN se entrena desde cero), early stopping 
 
 Demo interactiva desplegada en GitHub Pages: **https://simonlexrs.github.io/vision-computacional/**
 
-- Activa la cámara y enfoca una superficie metálica: la clasificación corre **en vivo, 100% en el navegador** (MobileNetV3-Small exportado a ONNX + ONNX Runtime Web). Ninguna imagen sale del dispositivo.
+- Activa la cámara y enfoca una superficie metálica: la inspección corre **en vivo, 100% en el navegador** (ONNX Runtime Web). Ninguna imagen sale del dispositivo.
+- Pipeline en dos etapas: un **gate de dominio** (MobileNetV3-Small, `web/model.onnx`, 6.4 MB) decide si la escena es una superficie metálica — si no lo es, reporta "Indefinido" y no muestra detecciones — y un **detector YOLOv8n** (`web/detector.onnx`) que **localiza y clasifica cada defecto individualmente** con bounding boxes por clase (`crack`, `hole`, `rust`, `scratch`). Sin defectos, la superficie se reporta como **Normal**.
+- El modo **"Bordes por detección"** superpone los bordes Sobel **solo dentro de las cajas detectadas**, en el color de cada clase.
 - Sin cámara disponible, también acepta **subir una imagen**.
-- El modelo servido (`web/model.onnx`, 6.4 MB) se genera con `src/export_onnx.py` y su paridad con PyTorch queda verificada en la exportación.
+- El clasificador se genera con `src/export_onnx.py` (paridad verificada en la exportación); el detector con `src/train_yolo.py` + export ONNX, y su paridad se verifica con `src/verify_detector_onnx.py`.
+
+### Detector YOLOv8n (localización individual)
+
+El dataset no trae bounding boxes (es de clasificación), pero `metadata.csv` guarda posición y tamaño aproximados de cada defecto. `src/prepare_yolo_dataset.py` deriva cajas reales refinándolas con segmentación OpenCV (fondo por mediana → diferencia → contornos asociados a cada centro) y genera `yolo_dataset/` en formato YOLO (hard links, sin duplicar imágenes; `normal` queda como background):
+
+```bash
+python src/prepare_yolo_dataset.py   # genera yolo_dataset/ + muestra visual de validación
+python src/train_yolo.py             # entrena YOLOv8n (imgsz=256) y evalúa en test
+# Exportar para la web:
+yolo export model=outputs/yolo/train/weights/best.pt format=onnx imgsz=256 opset=17 simplify=True
+python src/verify_detector_onnx.py   # paridad ONNX vs PyTorch
+```
+
+> Reserva metodológica: las etiquetas del detector se derivan de metadatos aproximados del generador; las métricas de detección (mAP) son exploratorias, no un benchmark estándar.
 
 ## Instalación y ejecución desde cero
 
@@ -215,7 +231,10 @@ Estructura relevante:
 │   ├── train.py                 # entrena y guarda checkpoints
 │   ├── evaluate.py              # métricas sobre test/ o val/
 │   ├── predict.py               # inferencia sobre imagen o carpeta (CPU)
-│   ├── export_onnx.py           # exporta a ONNX para la demo web
+│   ├── export_onnx.py           # exporta el clasificador a ONNX para la demo web
+│   ├── prepare_yolo_dataset.py  # deriva bounding boxes (metadata + OpenCV) → yolo_dataset/
+│   ├── train_yolo.py            # entrena el detector YOLOv8n y evalúa en test
+│   ├── verify_detector_onnx.py  # paridad del detector ONNX vs PyTorch
 │   ├── edge_detection.py        # edge detection en vivo (Canny, OpenCV)
 │   └── common.py                # arquitecturas, transforms y utilidades compartidas
 ├── web/                         # demo web estática (GitHub Pages + ONNX Runtime Web)
@@ -236,6 +255,16 @@ Métricas del último entrenamiento (`outputs/experiment_config.json` y `outputs
 | CNN básica | 17 | 18.8 | 0.9993 | 0.9987 | 0.9987 |
 
 **Lectura de resultados:** no hay brecha val → test (buena generalización, sin sobreajuste a la partición de validación). Los tres modelos con transfer learning alcanzan el 100% en test; la CNN baseline comete los únicos 2 errores del experimento (un `crack` y un `rust` clasificados como `normal`). MobileNetV3-Small iguala a ResNet-18 con ~7× menos parámetros y es el candidato recomendado para despliegue en hardware limitado.
+
+### Detector YOLOv8n (localización individual, demo web)
+
+Entrenado con etiquetas derivadas de `metadata.csv` + refinamiento OpenCV (`src/prepare_yolo_dataset.py`), evaluado sobre el mismo split test (`outputs/yolo/results.json`):
+
+| Modelo | mAP50 | mAP50-95 | Precisión | Recall |
+|--------|-------|----------|-----------|--------|
+| YOLOv8n (imgsz 256) | 0.799 | 0.564 | 0.778 | 0.746 |
+
+AP50 por clase: `crack` 0.968 · `hole` 0.897 · `rust` 0.713 · `scratch` 0.619. Las etiquetas aproximadas (cajas derivadas, no anotación manual) hacen de techo: defectos difusos o fragmentados (`rust`, `scratch`) penalizan más. Métricas exploratorias, no un benchmark de detección estándar.
 
 > Nota de honestidad: que 3 de 4 modelos lleguen al 100% indica que el dataset sintético es relativamente fácil frente al caso real (defectos grandes, alto contraste, sin ruido de sensor). Estas métricas son una cota superior bajo condiciones ideales, no una estimación de producción. El análisis completo está en las celdas de interpretación del notebook (secciones 8.1, 9, 10, 11, 12 y 14).
 
