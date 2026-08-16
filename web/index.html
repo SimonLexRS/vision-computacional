@@ -86,11 +86,94 @@
       </div>
 
       <div class="console-section">
-        <h2 class="section-label">Métricas</h2>
+        <div class="section-header-wrap">
+          <h2 class="section-label">Calibración y Umbrales</h2>
+          <button id="btn-reset-thresholds" class="btn-subtle" title="Restaurar valores por defecto">Restablecer</button>
+        </div>
+
+        <div class="presets-row">
+          <button class="preset-pill active" data-preset="balanced">⚡ Equilibrado</button>
+          <button class="preset-pill" data-preset="night">🌙 Nocturno / Poca Luz</button>
+          <button class="preset-pill" data-preset="outdoor">🛡️ Anti-Falsos Positivos</button>
+          <button class="preset-pill" data-preset="high_prec">🎯 Alta Precisión</button>
+          <button class="preset-pill" data-preset="sensitive">🔍 Sensible</button>
+        </div>
+
+        <div class="settings-grid">
+          <div class="setting-item">
+            <div class="setting-head">
+              <label for="slider-det-thr" class="setting-label">Confianza YOLO General</label>
+              <span class="setting-val" id="val-det-thr">55%</span>
+            </div>
+            <input type="range" id="slider-det-thr" min="15" max="90" step="1" value="55" class="setting-slider" />
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-head">
+              <label for="slider-rust-thr" class="setting-label">Umbral Específico de Óxido</label>
+              <span class="setting-val" id="val-rust-thr">65%</span>
+            </div>
+            <input type="range" id="slider-rust-thr" min="20" max="95" step="1" value="65" class="setting-slider" />
+            <span class="setting-hint">Exige mayor certeza en óxido para evitar falsos positivos con grano o sombras.</span>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-head">
+              <label for="slider-min-light" class="setting-label">Filtro de Luz Mínima (Noche)</label>
+              <span class="setting-val" id="val-min-light">30</span>
+            </div>
+            <input type="range" id="slider-min-light" min="5" max="70" step="1" value="30" class="setting-slider" />
+            <span class="setting-hint">Descarta tomas con oscuridad severa donde el ruido del sensor imita óxido.</span>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-head">
+              <label for="slider-max-sat" class="setting-label">Filtro Máx. de Color/Saturación</label>
+              <span class="setting-val" id="val-max-sat">32%</span>
+            </div>
+            <input type="range" id="slider-max-sat" min="10" max="70" step="1" value="32" class="setting-slider" />
+            <span class="setting-hint">Rechaza escenas con vegetación, ropa o colores vivos (no metálicas).</span>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-head">
+              <label for="slider-gate-hi" class="setting-label">Exigencia del Gate (Dominio)</label>
+              <span class="setting-val" id="val-gate-hi">94%</span>
+            </div>
+            <input type="range" id="slider-gate-hi" min="70" max="99" step="1" value="94" class="setting-slider" />
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-head">
+              <label for="select-roi-size" class="setting-label">Área de Inspección (ROI)</label>
+              <select id="select-roi-size" class="setting-select">
+                <option value="0.85">Estándar (85% del visor)</option>
+                <option value="0.95" selected>Amplio (95% del visor)</option>
+                <option value="1.00">Completo (100% del cuadro)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="console-section">
+        <h2 class="section-label">Métricas y Rendimiento</h2>
         <div class="metrics">
           <div class="metric"><span class="metric-value" id="fps">—</span><span class="metric-label">FPS</span></div>
           <div class="metric"><span class="metric-value" id="latency-cls">—</span><span class="metric-label">Gate ms</span></div>
           <div class="metric"><span class="metric-value" id="latency-det">—</span><span class="metric-label">Det ms</span></div>
+        </div>
+        <div class="scene-quality-bars">
+          <div class="quality-row">
+            <span class="quality-label">Luminosidad</span>
+            <div class="quality-track"><div class="quality-fill" id="fill-light" style="width: 50%;"></div></div>
+            <span class="quality-val" id="val-cur-light">—</span>
+          </div>
+          <div class="quality-row">
+            <span class="quality-label">Saturación Color</span>
+            <div class="quality-track"><div class="quality-fill" id="fill-sat" style="width: 10%;"></div></div>
+            <span class="quality-val" id="val-cur-sat">—</span>
+          </div>
         </div>
       </div>
 

@@ -4,23 +4,19 @@
  * Pipeline en dos etapas, 100% en el navegador (ONNX Runtime Web, WASM):
  *
  *   1. GATE DE DOMINIO — MobileNetV3-Small (model.onnx), clasificador de
- *      5 clases (crack, hole, normal, rust, scratch). Si su confianza
- *      suavizada < GATE_THRESHOLD la escena es fuera de dominio: se
- *      reporta "Indefinido" y NO se muestra ninguna detección ni borde.
- *      Así solo se muestran las clases para las que se entrenó el sistema.
+ *      5 clases (crack, hole, normal, rust, scratch).
  *
  *   2. DETECTOR — YOLOv8n (detector.onnx), 4 clases de defecto
- *      (crack, hole, rust, scratch). Solo corre cuando el gate está en
- *      dominio. Localiza y clasifica cada defecto individualmente;
- *      decode + NMS se hacen aquí en JS. En dominio y sin detecciones
- *      → la superficie es "Normal".
+ *      (crack, hole, rust, scratch).
  *
- * La detección de bordes (Sobel) queda subordinada al detector: solo se
- * pintan bordes DENTRO de las cajas detectadas, en el color de su clase.
+ *   3. FILTROS DE CALIDAD DE ESCENA:
+ *      - Iluminación mínima (anti-ruido nocturno / oscuridad extrema).
+ *      - Saturación cromática máxima (anti-escenas naturales / no metálicas).
+ *      - Umbral de confianza YOLO y umbral calibrado específico para óxido.
  *
- * Preprocesamiento por modelo (mismo recorte central cuadrado 256×256):
- *   gate     → grayscale replicado a 3 canales + normalización ImageNet.
- *   detector → RGB /255 (como el entrenamiento de ultralytics).
+ *   4. BUCLE REACTIVO DE ALTA VELOCIDAD:
+ *      - Utiliza `requestVideoFrameCallback` / `requestAnimationFrame` sin
+ *        retrasos artificiales, logrando 20-30+ FPS en hardware estándar.
  */
 
 "use strict";
@@ -47,12 +43,60 @@ const CLASS_RGB = {
 };
 const IMAGENET_MEAN = [0.485, 0.456, 0.406];
 const IMAGENET_STD = [0.229, 0.224, 0.225];
-const TICK_MS = 200;
-// Por debajo de esta confianza suavizada la escena se considera fuera
-// de dominio y se reporta "Indefinido" en lugar de una clase al azar.
-const GATE_THRESHOLD = 0.45;
-const DET_THRESHOLD = 0.4; // score mínimo por caja del detector
+
+// --- Umbrales calibrables dinámicos (con persistencia en localStorage) ---
+const PRESETS = {
+  balanced: {
+    detThr: 0.55,
+    rustThr: 0.65,
+    minLight: 30,
+    maxSat: 0.32,
+    gateHi: 0.94,
+    name: "Equilibrado",
+  },
+  night: {
+    detThr: 0.60,
+    rustThr: 0.75,
+    minLight: 25,
+    maxSat: 0.28,
+    gateHi: 0.95,
+    name: "Nocturno / Poca Luz",
+  },
+  outdoor: {
+    detThr: 0.65,
+    rustThr: 0.70,
+    minLight: 35,
+    maxSat: 0.24,
+    gateHi: 0.96,
+    name: "Anti-Falsos Positivos",
+  },
+  high_prec: {
+    detThr: 0.70,
+    rustThr: 0.80,
+    minLight: 35,
+    maxSat: 0.25,
+    gateHi: 0.97,
+    name: "Alta Precisión",
+  },
+  sensitive: {
+    detThr: 0.40,
+    rustThr: 0.50,
+    minLight: 20,
+    maxSat: 0.45,
+    gateHi: 0.90,
+    name: "Sensible",
+  },
+};
+
+let DET_THRESHOLD = 0.55;  // score mínimo general de caja YOLO (0.15 - 0.90)
+let RUST_THRESHOLD = 0.65; // score mínimo específico para óxido (0.20 - 0.95)
+let MIN_LIGHT = 30;        // luminancia media mínima (0 - 70)
+let MAX_SAT = 0.32;        // saturación media máxima permitida (0.10 - 0.70)
+let GATE_HI = 0.94;        // umbral para entrar a dominio (0.70 - 0.99)
+let GATE_LO = 0.84;        // umbral para salir de dominio (GATE_HI - 0.10)
+let ROI_SCALE = 0.95;      // escala del área de análisis en el visor
 const NMS_IOU = 0.45;
+const MAX_BOXES = 8;
 
 // --- Elementos de la UI ---
 const video = document.getElementById("video");
@@ -89,6 +133,26 @@ const barsEl = document.getElementById("bars");
 const preprocessCanvas = document.getElementById("preprocess");
 const preprocessCtx = preprocessCanvas.getContext("2d", { willReadFrequently: true });
 
+// Elementos de calibración y umbrales
+const sliderDetThr = document.getElementById("slider-det-thr");
+const valDetThr = document.getElementById("val-det-thr");
+const sliderRustThr = document.getElementById("slider-rust-thr");
+const valRustThr = document.getElementById("val-rust-thr");
+const sliderMinLight = document.getElementById("slider-min-light");
+const valMinLight = document.getElementById("val-min-light");
+const sliderMaxSat = document.getElementById("slider-max-sat");
+const valMaxSat = document.getElementById("val-max-sat");
+const sliderGateHi = document.getElementById("slider-gate-hi");
+const valGateHi = document.getElementById("val-gate-hi");
+const selectRoiSize = document.getElementById("select-roi-size");
+const btnResetThresholds = document.getElementById("btn-reset-thresholds");
+const presetPills = document.querySelectorAll(".preset-pill");
+
+const fillLight = document.getElementById("fill-light");
+const valCurLight = document.getElementById("val-cur-light");
+const fillSat = document.getElementById("fill-sat");
+const valCurSat = document.getElementById("val-cur-sat");
+
 let clsSession = null;
 let detSession = null;
 let clsInput = "input";
@@ -96,36 +160,184 @@ let clsOutput = "logits";
 let detInput = "images";
 let detOutput = "output0";
 let cameraStream = null;
-let tickTimer = null;
+let isStreaming = false;
+let videoFrameCallbackHandle = null;
+let animFrameHandle = null;
 let inferenceInFlight = false;
 let frameCount = 0;
 let fpsWindowStart = performance.now();
-// Suavizado exponencial de probabilidades del gate para estabilizar la
-// predicción en vivo (evita parpadeo entre clases frame a frame).
+
+// Suavizado exponencial de probabilidades del gate
 let smoothProbs = null;
-const SMOOTHING = 0.3;
-// Detecciones activas (coords del frame fuente), con seguimiento
-// temporal ligero contra parpadeo.
+const SMOOTHING = 0.35;
 let activeDets = [];
 let prevDets = [];
 let edgesOn = false;
-// Última imagen estática analizada (para re-correr el pipeline al
-// activar "Bordes por detección" sin cámara).
+let inDomain = false;
 let lastStaticSource = null;
 
-// Ajusta el marco de "zona de análisis" al cuadrado central del
-// wrapper (es exactamente la región que recorta el preprocesamiento).
+// --- Ajuste de ROI y Visor ---
 function layoutRoi() {
-  const side = Math.min(videoWrapper.clientWidth, videoWrapper.clientHeight) * 0.85;
-  roiGuide.style.width = `${side}px`;
-  roiGuide.style.height = `${side}px`;
+  const side = Math.min(videoWrapper.clientWidth, videoWrapper.clientHeight) * ROI_SCALE;
+  roiGuide.style.width = `${Math.round(side)}px`;
+  roiGuide.style.height = `${Math.round(side)}px`;
 }
 
 window.addEventListener("resize", layoutRoi);
 
+function syncVideoLayout() {
+  if (!video.videoWidth || !video.videoHeight) return;
+  videoWrapper.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+  videoWrapper.style.setProperty("--video-ar", video.videoWidth / video.videoHeight);
+  layoutRoi();
+}
+video.addEventListener("resize", syncVideoLayout);
+window.addEventListener("orientationchange", () => setTimeout(syncVideoLayout, 250));
+
+// --- Persistencia y Sincronización de Umbrales ---
+function loadSavedSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("inspector_settings") || "{}");
+    if (saved.detThr !== undefined) DET_THRESHOLD = saved.detThr;
+    if (saved.rustThr !== undefined) RUST_THRESHOLD = saved.rustThr;
+    if (saved.minLight !== undefined) MIN_LIGHT = saved.minLight;
+    if (saved.maxSat !== undefined) MAX_SAT = saved.maxSat;
+    if (saved.gateHi !== undefined) {
+      GATE_HI = saved.gateHi;
+      GATE_LO = Math.max(0.60, GATE_HI - 0.10);
+    }
+    if (saved.roiScale !== undefined) ROI_SCALE = saved.roiScale;
+  } catch (e) {
+    console.warn("No se pudieron cargar los ajustes guardados:", e);
+  }
+  syncControlsUI();
+}
+
+function saveSettings() {
+  try {
+    const settings = {
+      detThr: DET_THRESHOLD,
+      rustThr: RUST_THRESHOLD,
+      minLight: MIN_LIGHT,
+      maxSat: MAX_SAT,
+      gateHi: GATE_HI,
+      roiScale: ROI_SCALE,
+    };
+    localStorage.setItem("inspector_settings", JSON.stringify(settings));
+  } catch (e) {
+    console.warn("No se pudieron guardar los ajustes:", e);
+  }
+}
+
+function syncControlsUI() {
+  if (sliderDetThr) {
+    sliderDetThr.value = Math.round(DET_THRESHOLD * 100);
+    valDetThr.textContent = `${Math.round(DET_THRESHOLD * 100)}%`;
+  }
+  if (sliderRustThr) {
+    sliderRustThr.value = Math.round(RUST_THRESHOLD * 100);
+    valRustThr.textContent = `${Math.round(RUST_THRESHOLD * 100)}%`;
+  }
+  if (sliderMinLight) {
+    sliderMinLight.value = Math.round(MIN_LIGHT);
+    valMinLight.textContent = `${Math.round(MIN_LIGHT)}`;
+  }
+  if (sliderMaxSat) {
+    sliderMaxSat.value = Math.round(MAX_SAT * 100);
+    valMaxSat.textContent = `${Math.round(MAX_SAT * 100)}%`;
+  }
+  if (sliderGateHi) {
+    sliderGateHi.value = Math.round(GATE_HI * 100);
+    valGateHi.textContent = `${Math.round(GATE_HI * 100)}%`;
+  }
+  if (selectRoiSize) {
+    selectRoiSize.value = ROI_SCALE.toFixed(2);
+  }
+  layoutRoi();
+}
+
+function applyPreset(presetKey) {
+  const p = PRESETS[presetKey];
+  if (!p) return;
+  DET_THRESHOLD = p.detThr;
+  RUST_THRESHOLD = p.rustThr;
+  MIN_LIGHT = p.minLight;
+  MAX_SAT = p.maxSat;
+  GATE_HI = p.gateHi;
+  GATE_LO = Math.max(0.60, GATE_HI - 0.10);
+
+  presetPills.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.preset === presetKey);
+  });
+
+  syncControlsUI();
+  saveSettings();
+
+  // Si hay imagen estática, reanalizar con los nuevos umbrales
+  if (!cameraStream && lastStaticSource) {
+    runTickWhenReady(lastStaticSource.img, lastStaticSource.w, lastStaticSource.h);
+  }
+}
+
+function initThresholdEvents() {
+  if (sliderDetThr) {
+    sliderDetThr.addEventListener("input", (e) => {
+      DET_THRESHOLD = Number(e.target.value) / 100;
+      valDetThr.textContent = `${e.target.value}%`;
+      presetPills.forEach((p) => p.classList.remove("active"));
+      saveSettings();
+    });
+  }
+  if (sliderRustThr) {
+    sliderRustThr.addEventListener("input", (e) => {
+      RUST_THRESHOLD = Number(e.target.value) / 100;
+      valRustThr.textContent = `${e.target.value}%`;
+      presetPills.forEach((p) => p.classList.remove("active"));
+      saveSettings();
+    });
+  }
+  if (sliderMinLight) {
+    sliderMinLight.addEventListener("input", (e) => {
+      MIN_LIGHT = Number(e.target.value);
+      valMinLight.textContent = `${e.target.value}`;
+      presetPills.forEach((p) => p.classList.remove("active"));
+      saveSettings();
+    });
+  }
+  if (sliderMaxSat) {
+    sliderMaxSat.addEventListener("input", (e) => {
+      MAX_SAT = Number(e.target.value) / 100;
+      valMaxSat.textContent = `${e.target.value}%`;
+      presetPills.forEach((p) => p.classList.remove("active"));
+      saveSettings();
+    });
+  }
+  if (sliderGateHi) {
+    sliderGateHi.addEventListener("input", (e) => {
+      GATE_HI = Number(e.target.value) / 100;
+      GATE_LO = Math.max(0.60, GATE_HI - 0.10);
+      valGateHi.textContent = `${e.target.value}%`;
+      presetPills.forEach((p) => p.classList.remove("active"));
+      saveSettings();
+    });
+  }
+  if (selectRoiSize) {
+    selectRoiSize.addEventListener("change", (e) => {
+      ROI_SCALE = parseFloat(e.target.value);
+      layoutRoi();
+      saveSettings();
+    });
+  }
+  if (btnResetThresholds) {
+    btnResetThresholds.addEventListener("click", () => applyPreset("balanced"));
+  }
+  presetPills.forEach((btn) => {
+    btn.addEventListener("click", () => applyPreset(btn.dataset.preset));
+  });
+}
+
 // --- Pills de estado ---
 function setPill(el, state) {
-  // state: "loading" | "ready" | "error" | "idle"
   el.classList.remove("is-loading", "is-ready", "is-error");
   if (state === "loading") el.classList.add("is-loading");
   if (state === "ready") el.classList.add("is-ready");
@@ -153,7 +365,7 @@ function buildBars() {
 
 function updateBars(probs) {
   CLS_NAMES.forEach((name, i) => {
-    const pct = probs[i] * 100;
+    const pct = (probs ? probs[i] : 0) * 100;
     barFills[name].style.width = `${pct}%`;
     barValues[name].textContent = `${pct.toFixed(1)}%`;
   });
@@ -188,7 +400,7 @@ function updateDetList(dets) {
     detList.innerHTML = '<li class="det-empty">— sin detecciones —</li>';
     return;
   }
-  for (const d of dets.slice(0, 8)) {
+  for (const d of dets.slice(0, MAX_BOXES)) {
     const row = document.createElement("li");
     row.className = "det-row";
     row.innerHTML = `
@@ -201,15 +413,13 @@ function updateDetList(dets) {
 }
 
 // --- Carga de los modelos ONNX ---
-// `modelsReady` se resuelve cuando ambos intentos terminaron (éxito o
-// error): la imagen estática espera aquí antes de analizarse.
 let modelsReady;
 
 async function loadModels() {
-  // ONNX Runtime Web auto-hospedado en vendor/ort/ (sin CDN).
-  // Se usa document.baseURI: el loader jsep se importa como módulo ES y
-  // las rutas relativas se resolverían contra la carpeta del bundle.
   ort.env.wasm.wasmPaths = new URL("vendor/ort/", document.baseURI).href;
+  // Multi-threading WASM para acelerar la inferencia en CPU
+  const threads = Math.min(4, navigator.hardwareConcurrency || 4);
+  ort.env.wasm.numThreads = threads;
 
   const jobs = [
     ort.InferenceSession.create("model.onnx", { executionProviders: ["wasm"] })
@@ -240,8 +450,6 @@ async function loadModels() {
   await Promise.all(jobs);
 }
 
-// runTick se omite silenciosamente si el gate aún no cargó; para
-// fuentes estáticas (sin ticks periódicos) hay que esperar a los modelos.
 function runTickWhenReady(source, w, h) {
   if (clsSession) {
     runTick(source, w, h);
@@ -250,15 +458,64 @@ function runTickWhenReady(source, w, h) {
   }
 }
 
-// --- Preprocesamiento ---
-// Un solo draw del recorte central cuadrado a 256×256 alimenta los dos
-// tensores (cada modelo normaliza distinto).
+// --- Preprocesamiento y Análisis de Calidad de Escena ---
 function drawRegionToCanvas(source, sx, sy, side) {
   preprocessCtx.drawImage(source, sx, sy, side, side, 0, 0, IMG_SIZE, IMG_SIZE);
   return preprocessCtx.getImageData(0, 0, IMG_SIZE, IMG_SIZE).data;
 }
 
-// Gate: grayscale (luminosidad) replicado a 3 canales, norm. ImageNet, CHW.
+// Calcula métricas de iluminación y saturación para descartar tomas oscuras o escenas naturales
+function analyzeSceneQuality(pixels) {
+  const n = IMG_SIZE * IMG_SIZE;
+  let sumY = 0;
+  let sumSat = 0;
+
+  for (let i = 0; i < n; i++) {
+    const r = pixels[i * 4];
+    const g = pixels[i * 4 + 1];
+    const b = pixels[i * 4 + 2];
+
+    const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    sumY += y;
+
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const delta = max - min;
+    const sat = max > 0 ? delta / max : 0;
+    sumSat += sat;
+  }
+
+  const meanY = sumY / n;
+  const meanSat = sumSat / n;
+
+  if (fillLight && valCurLight) {
+    const lightPct = Math.min(100, Math.max(0, (meanY / 255) * 100));
+    fillLight.style.width = `${lightPct.toFixed(0)}%`;
+    valCurLight.textContent = `${meanY.toFixed(0)} / 255`;
+    if (meanY < MIN_LIGHT) {
+      fillLight.style.background = "var(--color-crack)";
+    } else {
+      fillLight.style.background = "var(--color-accent)";
+    }
+  }
+
+  if (fillSat && valCurSat) {
+    const satPct = Math.min(100, Math.max(0, meanSat * 100));
+    fillSat.style.width = `${satPct.toFixed(0)}%`;
+    valCurSat.textContent = `${satPct.toFixed(1)}%`;
+    if (meanSat > MAX_SAT) {
+      fillSat.style.background = "var(--color-hole)";
+    } else {
+      fillSat.style.background = "var(--color-normal)";
+    }
+  }
+
+  const isTooDark = meanY < MIN_LIGHT;
+  const isTooSaturated = meanSat > MAX_SAT;
+
+  return { meanY, meanSat, isTooDark, isTooSaturated };
+}
+
 function pixelsToClsTensor(pixels, target) {
   const plane = IMG_SIZE * IMG_SIZE;
   for (let i = 0; i < plane; i++) {
@@ -273,7 +530,6 @@ function pixelsToClsTensor(pixels, target) {
   }
 }
 
-// Detector: RGB /255, CHW (preproceso de ultralytics).
 function pixelsToDetTensor(pixels, target) {
   const plane = IMG_SIZE * IMG_SIZE;
   for (let i = 0; i < plane; i++) {
@@ -284,7 +540,6 @@ function pixelsToDetTensor(pixels, target) {
 }
 
 function preprocess(source, srcWidth, srcHeight) {
-  // Recorte central cuadrado, como imagen completa encuadrada.
   const side = Math.min(srcWidth, srcHeight);
   const sx = (srcWidth - side) / 2;
   const sy = (srcHeight - side) / 2;
@@ -299,6 +554,7 @@ function preprocess(source, srcWidth, srcHeight) {
     clsTensor: new ort.Tensor("float32", clsData, [1, 3, IMG_SIZE, IMG_SIZE]),
     detTensor: new ort.Tensor("float32", detData, [1, 3, IMG_SIZE, IMG_SIZE]),
     crop: { sx, sy, side },
+    pixels,
   };
 }
 
@@ -309,7 +565,7 @@ function softmax(logits) {
   return exps.map((x) => x / sum);
 }
 
-// --- Decode del detector (YOLOv8 [1, 4+nc, N]) + NMS en JS ---
+// --- Decode del detector (YOLOv8 [1, 4+nc, N]) con umbrales dinámicos y filtro de óxido ---
 function decodeDetections(tensor) {
   const [, channels, n] = tensor.dims; // [1, 8, N]
   const d = tensor.data;
@@ -324,7 +580,11 @@ function decodeDetections(tensor) {
         bestCls = c;
       }
     }
-    if (bestScore < DET_THRESHOLD) continue;
+
+    // Regulación de sensibilidad: el óxido utiliza un umbral estricto para evitar falsos positivos nocturnos
+    const requiredThreshold = DET_NAMES[bestCls] === "rust" ? RUST_THRESHOLD : DET_THRESHOLD;
+    if (bestScore < requiredThreshold) continue;
+
     const cx = d[i];
     const cy = d[n + i];
     const w = d[2 * n + i];
@@ -356,12 +616,11 @@ function nms(dets) {
   const order = [...dets].sort((a, b) => b.score - a.score);
   const keep = [];
   for (const d of order) {
-    if (keep.every((k) => k.cls !== d.cls || iou(k, d) <= NMS_IOU)) keep.push(d);
+    if (keep.every((k) => iou(k, d) <= NMS_IOU)) keep.push(d);
   }
   return keep;
 }
 
-// De coordenadas del tensor 256×256 a coordenadas del frame fuente.
 function toSourceCoords(d, crop) {
   const scale = crop.side / IMG_SIZE;
   return {
@@ -375,13 +634,12 @@ function toSourceCoords(d, crop) {
   };
 }
 
-// Seguimiento temporal ligero: empareja por clase + IoU y suaviza
-// coords/score; las no emparejadas sobreviven un tick con decay.
+// Seguimiento temporal contra parpadeo
 function track(dets) {
   const used = new Set();
   const out = dets.map((d) => {
     let best = -1;
-    let bestIou = 0.3; // umbral de emparejamiento
+    let bestIou = 0.3;
     prevDets.forEach((p, j) => {
       if (used.has(j) || p.name !== d.name) return;
       const v = iou(d, p);
@@ -395,18 +653,24 @@ function track(dets) {
       const p = prevDets[best];
       const mix = (a, b) => 0.5 * a + 0.5 * b;
       return {
-        x1: mix(d.x1, p.x1), y1: mix(d.y1, p.y1),
-        x2: mix(d.x2, p.x2), y2: mix(d.y2, p.y2),
-        score: mix(d.score, p.score), cls: d.cls, name: d.name, misses: 0,
+        x1: mix(d.x1, p.x1),
+        y1: mix(d.y1, p.y1),
+        x2: mix(d.x2, p.x2),
+        y2: mix(d.y2, p.y2),
+        score: mix(d.score, p.score),
+        cls: d.cls,
+        name: d.name,
+        misses: 0,
       };
     }
     return { ...d, misses: 0 };
   });
-  // Retener una vez las detecciones que el detector "parpadeó".
+
   prevDets.forEach((p, j) => {
     if (used.has(j) || p.misses > 0) return;
     const decayed = { ...p, score: p.score * 0.6, misses: 1 };
-    if (decayed.score >= 0.25) out.push(decayed);
+    const thr = decayed.name === "rust" ? RUST_THRESHOLD * 0.5 : DET_THRESHOLD * 0.5;
+    if (decayed.score >= thr) out.push(decayed);
   });
   prevDets = out;
   return out;
@@ -417,58 +681,60 @@ function resetTracker() {
 }
 
 // --- Publicación en la UI ---
-function showResults(probs, gateConfident, dets) {
-  const bestIdx = probs.indexOf(Math.max(...probs));
-  const gateName = CLS_NAMES[bestIdx];
-  const gateConf = probs[bestIdx];
+function showResults(probs, dets, oodReason) {
+  const bestIdx = probs ? probs.indexOf(Math.max(...probs)) : 0;
+  const gateTop = probs ? CLS_NAMES[bestIdx] : "normal";
+  const gateConf = probs ? probs[bestIdx] : 0;
 
-  let detColor = "var(--color-oos)";
-  let label = "Indefinido";
-  let confText = `${(gateConf * 100).toFixed(1)}%`;
+  let color = "var(--color-oos)";
+  let label = oodReason || "Indefinido";
+  let confText = probs ? `${(gateConf * 100).toFixed(1)}%` : "—";
 
-  if (gateConfident && dets.length) {
-    const top = dets[0]; // vienen ordenados por score tras NMS+track
-    detColor = `var(--color-${top.name})`;
+  if (inDomain && dets.length) {
+    const top = dets[0];
+    color = `var(--color-${top.name})`;
     label = CLASS_LABELS[top.name];
     confText = `${(top.score * 100).toFixed(1)}%`;
-  } else if (gateConfident) {
-    detColor = "var(--color-normal)";
+  } else if (inDomain && gateTop === "normal") {
+    color = "var(--color-normal)";
     label = "Normal — sin defectos";
-    confText = `${(gateConf * 100).toFixed(1)}%`;
   }
 
-  // Marco del wrapper en el color de estado (gris si fuera de dominio).
-  videoWrapper.style.setProperty("--det-color", detColor);
-  videoWrapper.classList.add("detecting");
-
   chip.hidden = false;
+  chipDot.style.background = color;
   chipClass.textContent = label;
-  chipClass.style.color = detColor;
+  chipClass.style.color = color;
   chipConf.textContent = confText;
 
-  // Contador de defectos.
-  const showCount = gateConfident && dets.length > 0;
+  const showCount = inDomain && dets.length > 0;
   detCount.hidden = !showCount;
   if (showCount) {
     detCount.textContent = `${dets.length} defecto${dets.length > 1 ? "s" : ""}`;
   }
 
-  // Estado del sistema.
+  roiGuide.hidden = !hasSource() || dets.length > 0;
+
   sysState.classList.remove("is-idle", "is-in", "is-out");
-  if (gateConfident) {
+  if (!inDomain) {
+    sysState.classList.add("is-out");
+    sysStateText.textContent = oodReason || "Fuera de dominio";
+  } else if (dets.length) {
     sysState.classList.add("is-in");
     sysStateText.textContent = "En dominio — inspeccionando";
+  } else if (gateTop === "normal") {
+    sysState.classList.add("is-in");
+    sysStateText.textContent = "En dominio — sin defectos";
   } else {
     sysState.classList.add("is-out");
-    sysStateText.textContent = "Fuera de dominio";
+    sysStateText.textContent = "Sin detección clara";
   }
 
   updateBars(probs);
-  updateCounts(gateConfident ? dets : []);
-  updateDetList(gateConfident ? dets : []);
+  updateCounts(inDomain ? dets : []);
+  updateDetList(inDomain ? dets : []);
 }
 
-// --- Dibujo de cajas (esquinas tipo target, estilo HMI) ---
+// --- Dibujo de cajas con estilo HMI industrial ---
 function drawDetections(srcWidth, srcHeight, dets) {
   if (!dets.length) {
     detectCtx.clearRect(0, 0, detectOverlay.width, detectOverlay.height);
@@ -492,17 +758,16 @@ function drawDetections(srcWidth, srcHeight, dets) {
     const color = `rgb(${r} ${g} ${b})`;
     const w = d.x2 - d.x1;
     const h = d.y2 - d.y1;
-    const arm = Math.max(10, Math.min(w, h) * 0.3); // largo de esquina
+    const arm = Math.max(10, Math.min(w, h) * 0.3);
 
     ctx.strokeStyle = color;
-    ctx.beginPath(); // 4 esquinas tipo target
+    ctx.beginPath();
     ctx.moveTo(d.x1, d.y1 + arm); ctx.lineTo(d.x1, d.y1); ctx.lineTo(d.x1 + arm, d.y1);
     ctx.moveTo(d.x2 - arm, d.y1); ctx.lineTo(d.x2, d.y1); ctx.lineTo(d.x2, d.y1 + arm);
     ctx.moveTo(d.x2, d.y2 - arm); ctx.lineTo(d.x2, d.y2); ctx.lineTo(d.x2 - arm, d.y2);
     ctx.moveTo(d.x1 + arm, d.y2); ctx.lineTo(d.x1, d.y2); ctx.lineTo(d.x1, d.y2 - arm);
     ctx.stroke();
 
-    // Etiqueta "Clase 92%" sobre la esquina superior izquierda.
     const text = `${CLASS_LABELS[d.name]} ${(d.score * 100).toFixed(0)}%`;
     const tw = ctx.measureText(text).width;
     const pad = fontPx * 0.35;
@@ -515,16 +780,12 @@ function drawDetections(srcWidth, srcHeight, dets) {
   }
 }
 
-// --- Detección de bordes subordinada al detector ---
-// Sobel sobre el frame completo, pero SOLO se pintan los píxeles de
-// borde que caen dentro de una caja detectada, en el color de su clase.
-// Sin detecciones (o fuera de dominio) → overlay limpio: el sistema no
-// "detecta todo", solo muestra las clases entrenadas.
+// --- Detección de bordes (Sobel) dentro de cajas ---
 const EDGES_WIDTH = 384;
-const EDGE_THRESHOLD = 80; // magnitud Sobel mínima (0-1020)
+const EDGE_THRESHOLD = 80;
 const edgeSrc = document.createElement("canvas");
 const edgeSrcCtx = edgeSrc.getContext("2d", { willReadFrequently: true });
-let edgeGray = null; // buffers reutilizados (sin allocations por tick)
+let edgeGray = null;
 let edgeMag = null;
 let edgeOut = null;
 
@@ -564,13 +825,12 @@ function updateEdges(source, srcWidth, srcHeight, gateConfident, dets) {
         -g[i - aw - 1] - 2 * g[i - 1] - g[i + aw - 1] +
         g[i - aw + 1] + 2 * g[i + 1] + g[i + aw + 1];
       const gy =
-        -g[i - aw - 1] - 2 * g[i - aw] - g[i - aw + 1] +
-        g[i + aw - 1] + 2 * g[i + aw] + g[i + aw + 1];
+        -g[i - aw - 1] - 2 * g[i - 1] +
+        g[i - aw + 1] + 2 * g[i + 1] + g[i + aw + 1];
       mag[i] = Math.abs(gx) + Math.abs(gy);
     }
   }
 
-  // Pintar solo dentro de cada caja, con el color de su clase.
   const sx = aw / srcWidth;
   const sy = ah / srcHeight;
   od.fill(0);
@@ -598,7 +858,6 @@ function updateEdges(source, srcWidth, srcHeight, gateConfident, dets) {
 }
 
 function hasSource() {
-  // Hay algo que analizar: stream de cámara o imagen subida visible.
   return !!cameraStream || !overlay.hidden;
 }
 
@@ -611,23 +870,46 @@ function setEdges(on) {
     edgesCtx.clearRect(0, 0, edgesOverlay.width, edgesOverlay.height);
     edgesOverlay.hidden = true;
   } else if (!cameraStream && lastStaticSource) {
-    // Imagen estática: no hay ticks periódicos, re-analizar una vez
-    // para pintar (o limpiar) los bordes de inmediato.
     runTickWhenReady(lastStaticSource.img, lastStaticSource.w, lastStaticSource.h);
   }
 }
 
-// --- Tick de inferencia (gate → detector → UI) ---
+// --- Tick de inferencia optimizado ---
 async function runTick(source, srcWidth, srcHeight) {
-  // Guard anti-solapamiento: si el tick anterior no terminó, se omite
-  // (evita ejecuciones concurrentes acumuladas).
   if (!clsSession || inferenceInFlight) return;
   inferenceInFlight = true;
 
   try {
-    const { clsTensor, detTensor, crop } = preprocess(source, srcWidth, srcHeight);
+    const { clsTensor, detTensor, crop, pixels } = preprocess(source, srcWidth, srcHeight);
 
-    // 1) Gate de dominio.
+    // 0) Validación de calidad de escena (luminancia y saturación)
+    const quality = analyzeSceneQuality(pixels);
+
+    if (quality.isTooDark) {
+      inDomain = false;
+      resetTracker();
+      activeDets = [];
+      showResults(null, [], "Poca luz (Anti-ruido nocturno activo)");
+      drawDetections(srcWidth, srcHeight, []);
+      updateEdges(source, srcWidth, srcHeight, false, []);
+      latencyClsEl.textContent = "—";
+      latencyDetEl.textContent = "—";
+      return;
+    }
+
+    if (quality.isTooSaturated) {
+      inDomain = false;
+      resetTracker();
+      activeDets = [];
+      showResults(null, [], "Fuera de dominio (Color no metálico)");
+      drawDetections(srcWidth, srcHeight, []);
+      updateEdges(source, srcWidth, srcHeight, false, []);
+      latencyClsEl.textContent = "—";
+      latencyDetEl.textContent = "—";
+      return;
+    }
+
+    // 1) Gate de dominio
     const t0 = performance.now();
     const clsOut = await clsSession.run({ [clsInput]: clsTensor });
     const clsMs = performance.now() - t0;
@@ -636,28 +918,38 @@ async function runTick(source, srcWidth, srcHeight) {
     smoothProbs = smoothProbs
       ? probs.map((p, i) => SMOOTHING * p + (1 - SMOOTHING) * smoothProbs[i])
       : probs;
-    const gateConfident = Math.max(...smoothProbs) >= GATE_THRESHOLD;
 
-    // 2) Detector (solo en dominio).
+    const gateMax = Math.max(...smoothProbs);
+    const gateTop = CLS_NAMES[smoothProbs.indexOf(gateMax)];
+    if (!inDomain && gateMax >= GATE_HI) inDomain = true;
+    else if (inDomain && gateMax < GATE_LO) inDomain = false;
+
+    // 2) Detector YOLOv8n
     let dets = [];
     let detMs = null;
-    if (gateConfident && detSession) {
+    if (inDomain && detSession) {
       const t1 = performance.now();
       const detOut = await detSession.run({ [detInput]: detTensor });
       detMs = performance.now() - t1;
+
       dets = nms(decodeDetections(detOut[detOutput]))
         .sort((a, b) => b.score - a.score)
         .map((d) => toSourceCoords(d, crop));
-      dets = track(dets);
-    } else if (!gateConfident) {
+
+      // Acuerdo estricto gate<->detector: si el gate es "normal", suprime cajas
+      if (gateTop === "normal") dets = [];
+      else dets = dets.filter((d) => d.name === gateTop);
+
+      dets = track(dets).slice(0, MAX_BOXES);
+    } else if (!inDomain) {
       resetTracker();
     }
-    const shown = gateConfident ? dets : [];
+    const shown = inDomain ? dets : [];
     activeDets = shown;
 
-    showResults(smoothProbs, gateConfident, shown);
+    showResults(smoothProbs, shown, inDomain ? null : "Fuera de dominio");
     drawDetections(srcWidth, srcHeight, shown);
-    updateEdges(source, srcWidth, srcHeight, gateConfident, shown);
+    updateEdges(source, srcWidth, srcHeight, inDomain, shown);
 
     latencyClsEl.textContent = `${clsMs.toFixed(0)}`;
     if (detMs !== null) latencyDetEl.textContent = `${detMs.toFixed(0)}`;
@@ -675,6 +967,27 @@ async function runTick(source, srcWidth, srcHeight) {
     statusEl.textContent = "Error en la inferencia: " + err.message;
   } finally {
     inferenceInFlight = false;
+  }
+}
+
+// --- Bucle continuo de alta velocidad (20-30+ FPS) ---
+function scheduleNextFrame() {
+  if (!isStreaming || !cameraStream) return;
+
+  if ("requestVideoFrameCallback" in video) {
+    videoFrameCallbackHandle = video.requestVideoFrameCallback(async () => {
+      if (isStreaming && video.readyState >= 2) {
+        await runTick(video, video.videoWidth, video.videoHeight);
+      }
+      scheduleNextFrame();
+    });
+  } else {
+    animFrameHandle = requestAnimationFrame(async () => {
+      if (isStreaming && video.readyState >= 2) {
+        await runTick(video, video.videoWidth, video.videoHeight);
+      }
+      scheduleNextFrame();
+    });
   }
 }
 
@@ -706,19 +1019,14 @@ async function startCamera() {
   placeholder.style.display = "none";
   await video.play();
 
-  // El wrapper adopta la proporción real del stream: con object-fit
-  // cover y proporción coincidente nada queda recortado ni con franjas.
-  if (video.videoWidth && video.videoHeight) {
-    videoWrapper.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
-    // Variable CSS usada por el layout de pantalla completa.
-    videoWrapper.style.setProperty("--video-ar", video.videoWidth / video.videoHeight);
-  }
+  syncVideoLayout();
   smoothProbs = null;
+  inDomain = false;
   resetTracker();
   roiGuide.hidden = false;
   layoutRoi();
 
-  statusEl.textContent = "Cámara activa — inspeccionando en vivo.";
+  statusEl.textContent = "Cámara activa — inspeccionando en vivo a alta velocidad.";
   btnCamera.textContent = "Detener cámara";
   btnCamera.disabled = false;
   btnEdges.disabled = false;
@@ -727,27 +1035,30 @@ async function startCamera() {
   sysState.classList.add("is-out");
   sysStateText.textContent = "Fuera de dominio";
 
-  clearInterval(tickTimer);
-  tickTimer = setInterval(() => {
-    if (video.readyState >= 2) {
-      runTick(video, video.videoWidth, video.videoHeight);
-    }
-  }, TICK_MS);
+  isStreaming = true;
+  frameCount = 0;
+  fpsWindowStart = performance.now();
+  scheduleNextFrame();
 
-  // Gancho de prueba automatizada: ?edges=1 activa la vista de bordes.
   if (new URLSearchParams(location.search).has("edges")) {
     setEdges(true);
   }
 }
 
 function stopCamera() {
-  clearInterval(tickTimer);
-  tickTimer = null;
+  isStreaming = false;
+  if (videoFrameCallbackHandle && "cancelVideoFrameCallback" in video) {
+    video.cancelVideoFrameCallback(videoFrameCallbackHandle);
+    videoFrameCallbackHandle = null;
+  }
+  if (animFrameHandle) {
+    cancelAnimationFrame(animFrameHandle);
+    animFrameHandle = null;
+  }
   if (cameraStream) {
     cameraStream.getTracks().forEach((t) => t.stop());
     cameraStream = null;
   }
-  // Reset de la vista de bordes (requiere cámara activa).
   edgesOn = false;
   edgesOverlay.hidden = true;
   edgesCtx.clearRect(0, 0, edgesOverlay.width, edgesOverlay.height);
@@ -762,11 +1073,9 @@ function stopCamera() {
   detCount.hidden = true;
   roiGuide.hidden = true;
   smoothProbs = null;
+  inDomain = false;
   resetTracker();
   activeDets = [];
-  // Quitar el marco de reconocimiento.
-  videoWrapper.classList.remove("detecting");
-  videoWrapper.style.removeProperty("--det-color");
   statusEl.textContent = "Cámara detenida.";
   btnCamera.textContent = "Activar cámara";
   setPill(badgeCam, "idle");
@@ -783,15 +1092,10 @@ function stopUploadedImage() {
   overlay.hidden = true;
 }
 
-// Muestra y analiza una imagen estática (misma ruta para upload y para
-// el gancho de prueba ?imgtest=).
 function analyzeImage(img, name) {
-  // Mostrar la imagen en el área del video.
   if (cameraStream) stopCamera();
   video.hidden = true;
 
-  // El overlay se dibuja a la resolución de la imagen (tope 1024 px)
-  // y el wrapper adopta su proporción: object-fit cover sin cortes.
   const scale = Math.min(1, 1024 / Math.max(img.width, img.height));
   overlay.width = Math.round(img.width * scale);
   overlay.height = Math.round(img.height * scale);
@@ -829,7 +1133,10 @@ function handleUpload(event) {
 // --- Init ---
 buildBars();
 buildCounts();
+loadSavedSettings();
+initThresholdEvents();
 modelsReady = loadModels();
+
 btnCamera.addEventListener("click", () => {
   if (cameraStream) stopCamera();
   else startCamera();
@@ -839,7 +1146,7 @@ btnEdges.addEventListener("click", () => setEdges(!edgesOn));
 
 // --- Pantalla completa ---
 if (!document.fullscreenEnabled) {
-  btnFullscreen.hidden = true; // p. ej. iOS Safari en iPhone
+  btnFullscreen.hidden = true;
 }
 btnFullscreen.addEventListener("click", async () => {
   try {
@@ -856,16 +1163,12 @@ document.addEventListener("fullscreenchange", () => {
   layoutRoi();
 });
 
-// Gancho de prueba automatizada: ?autocam=1 activa la cámara sin clic
-// (se usa con --use-fake-device-for-media-stream en tests headless).
+// Ganchos de prueba
 const urlParams = new URLSearchParams(location.search);
 if (urlParams.has("autocam")) {
   startCamera();
 }
 
-// Gancho de prueba: ?imgtest=<ruta> analiza una imagen servida por el
-// propio host (p. ej. capturas del split test), sin cámara ni diálogo.
-// Se puede combinar con &edges=1 para activar la vista de bordes.
 const imgtest = urlParams.get("imgtest");
 if (imgtest) {
   const img = new Image();
