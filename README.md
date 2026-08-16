@@ -35,11 +35,114 @@ Demo interactiva desplegada en GitHub Pages: **https://simonlexrs.github.io/visi
 - Sin cámara disponible, también acepta **subir una imagen**.
 - El modelo servido (`web/model.onnx`, 6.4 MB) se genera con `src/export_onnx.py` y su paridad con PyTorch queda verificada en la exportación.
 
-## Cómo ejecutar
+## Instalación y ejecución desde cero
+
+Los siguientes pasos permiten descargar y preparar el proyecto en una computadora por primera vez.
+
+### 1. Crear una carpeta de trabajo
+
+Abrir una terminal y crear una carpeta donde se almacenará el proyecto. Por ejemplo:
 
 ```bash
-pip install -r requirements.txt
+mkdir -p ~/proyectos/vision_computacional
+cd ~/proyectos/vision_computacional
 ```
+
+> La ubicación y el nombre de esta carpeta son libres. Lo importante es ubicarse dentro de ella antes de clonar el repositorio.
+
+### 2. Clonar el repositorio
+
+Descargar el proyecto desde GitHub:
+
+```bash
+git clone https://github.com/SimonLexRS/vision-computacional.git
+```
+
+Ingresar al repositorio descargado:
+
+```bash
+cd vision-computacional
+```
+
+Para comprobar que el repositorio se clonó correctamente:
+
+```bash
+git status
+```
+
+Debería indicar que se está trabajando sobre la rama `main`.
+
+### 3. Crear y activar un entorno de Python
+
+Se recomienda utilizar un entorno virtual para mantener aisladas las dependencias del proyecto.
+
+Con `venv`:
+
+```bash
+python3 -m venv .venv
+```
+
+En Linux / Ubuntu / WSL:
+
+```bash
+source .venv/bin/activate
+```
+
+En Windows PowerShell:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+También puede utilizarse un entorno Conda equivalente.
+
+### 4. Instalar las dependencias
+
+Con el entorno activado:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+
+
+El proyecto puede ejecutarse en CPU. Si existe una GPU NVIDIA compatible con CUDA, el entrenamiento puede aprovecharla según la configuración utilizada.
+
+### 5. Actualizar el proyecto
+
+Si el repositorio ya fue clonado anteriormente, no es necesario volver a descargarlo. Desde la carpeta del proyecto:
+
+```bash
+git switch main
+git pull origin main
+```
+
+Esto actualiza la copia local con los últimos cambios disponibles en la rama principal.
+
+### Flujo Git para colaboradores
+
+Para realizar modificaciones se recomienda crear una rama nueva en lugar de trabajar directamente sobre `main`:
+
+```bash
+git switch -c nombre-de-la-rama
+```
+
+Después de realizar los cambios:
+
+```bash
+git status
+git add nombre_del_archivo
+git commit -m "Descripción breve del cambio"
+git push -u origin nombre-de-la-rama
+```
+
+Finalmente, desde GitHub se crea un **Pull Request** de la nueva rama hacia `main` para revisar e integrar los cambios.
+
+> `git commit` guarda los cambios localmente, `git push` los envía a GitHub y el Pull Request propone incorporarlos a la rama principal.
+
+
+## Cómo ejecutar
 
 ### Entrenamiento (línea de comandos, sin Jupyter)
 
