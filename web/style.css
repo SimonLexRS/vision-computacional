@@ -165,16 +165,9 @@ body {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--color-rule);
-  transition: border-color var(--dur-med) var(--ease-out),
-              box-shadow var(--dur-med) var(--ease-out);
 }
-
-/* Reconocimiento activo: marco en el color de la clase dominante
-   (--det-color lo fija app.js), con glow exterior contenido. */
-.video-wrapper.detecting {
-  border-color: var(--det-color, var(--color-rule));
-  box-shadow: 0 0 24px -6px var(--det-color, transparent);
-}
+/* Nota: ya no hay marco de color alrededor de todo el frame — el
+   marcado visual son SOLO las cajas de detección. */
 
 .video-wrapper video,
 .video-wrapper canvas.layer {
@@ -220,9 +213,10 @@ body {
   white-space: nowrap;
 }
 
-/* El atributo hidden pierde contra display:flex/block de autor:
-   regla explícita para que los elementos ocultos no se pinten. */
-.video-wrapper [hidden] {
+/* El atributo hidden pierde contra display:flex/block/grid de autor:
+   regla GLOBAL para que los elementos ocultos nunca se pinten
+   (p. ej. el botón de pantalla completa en navegadores sin soporte). */
+[hidden] {
   display: none !important;
 }
 
@@ -264,7 +258,7 @@ body {
   width: 9px;
   height: 9px;
   border-radius: var(--radius-sm);
-  background: var(--det-color, var(--color-oos));
+  background: var(--color-oos); /* app.js lo colorea según el estado */
   flex: none;
 }
 
