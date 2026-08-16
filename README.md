@@ -1,299 +1,162 @@
-# Visión computacional: defectos en superficies metálicas
+# Visión computacional: detección y clasificación de defectos en superficies metálicas
 
-Proyecto de clasificación multi-clase de defectos industriales en metal: se compara una **CNN entrenada desde cero** (baseline) contra tres modelos con **transfer learning** (PyTorch + CUDA).
+Proyecto integral de detección de objetos y clasificación multi-clase de defectos industriales en metal: combina un **Gate clasificador de dominio** (MobileNetV3-Small) y un **detector YOLOv8n en tiempo real** entrenados con aceleración por hardware (**GPU NVIDIA GeForce RTX 5060 Ti**) sobre datasets combinados sintéticos y reales.
 
-**Dataset:** [Synthetic Industrial Metal Surface Defects](https://www.kaggle.com/datasets/tatheerabbas/synthetic-industrial-metal-surface-defects) (Tatheer Abbas, CC BY 4.0) — 15.000 imágenes PNG 256×256 en escala de grises, 5 clases balanceadas (`normal`, `scratch`, `crack`, `rust`, `hole`).
+---
 
-Documentación del planteamiento: [`DOCUMENTO_PROYECTO.md`](DOCUMENTO_PROYECTO.md).
+## 📚 Datasets, Fuentes y Créditos Académicos
 
-## División del dataset (train / val / test)
+Para garantizar máxima precisión y capacidad de generalización frente a texturas reales, grano de sensor, iluminación variable y variaciones microscópicas de defectos, este proyecto integra y da crédito a las siguientes bases de datos etiquetadas:
 
-División **80/10/10 estratificada** (misma proporción por clase, sin solape entre particiones). El conjunto de test se generó moviendo 300 imágenes por clase desde `val/` a `test/` con semilla fija (`SEED = 42`), por lo que la división es reproducible:
+### 1. Synthetic Industrial Metal Surface Defects
+- **Autor:** Tatheer Abbas (Kaggle).
+- **Licencia:** [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
+- **Enlace:** [Kaggle Dataset](https://www.kaggle.com/datasets/tatheerabbas/synthetic-industrial-metal-surface-defects).
+- **Descripción:** 15.000 imágenes PNG $256 \times 256$ en escala de grises, 5 clases perfectamente balanceadas (`normal`, `scratch`, `crack`, `rust`, `hole`), con metadatos asociados (`metadata.csv`) sobre centros, áreas de defecto y parámetros de textura/iluminación.
 
-| Partición | Imágenes | Por clase | Uso |
-|-----------|----------|-----------|-----|
-| train | 12.000 | 2.400 | Entrenamiento (con data augmentation) |
-| val (validation) | 1.500 | 300 | Early stopping y selección del mejor checkpoint |
-| test | 1.500 | 300 | Evaluación final, una sola vez |
+### 2. SteelDefectX (A Real-World Benchmark Dataset for Steel Surface Defect Detection)
+- **Autores:** Zhao et al. (2024).
+- **Repositorio:** [Hugging Face Zhaosxian/SteelDefectX](https://huggingface.co/datasets/Zhaosxian/SteelDefectX).
+- **Descripción:** 5.454 imágenes reales capturadas en líneas de producción industrial de acero laminado en caliente y frío. Aporta muestras con reflectancia metálica real, ruido de rodillo y defectos auténticos categorizados y mapeados al proyecto:
+  - `Crazing`, `Crease`, `Waist folding` $\rightarrow$ **`crack`** (grietas y fisuras).
+  - `Bright scratch`, `Dark scratches`, `Finishing roll printing` $\rightarrow$ **`scratch`** (rayones superficiales).
+  - `Secondary rust skin`, `White rust`, `Pitted surface`, `Rolled in scale`, `Red iron sheet`, `Oxide scale` $\rightarrow$ **`rust`** (óxido, corrosión y picaduras).
+  - `Punching`, `Inclusion`, `Slag inclusion`, `Patches`, `Crescent gap`, `Rolled pit` $\rightarrow$ **`hole`** (perforaciones, oquedades e inclusiones).
 
-## Modelos
+### 3. NEU Surface Defect Database (NEU-DET / NEU-CLS)
+- **Autores:** Kechen Song y Yunhui Yan (Northeastern University, Shenyang, China).
+- **Cita Académica:**
+  > Song, K., & Yan, Y. (2013). *A noise robust method based on completed local binary patterns for hot-rolled steel strip surface defect detection*. **Applied Surface Science**, 285, 858-864. DOI: [10.1016/j.apsusc.2013.09.002](https://doi.org/10.1016/j.apsusc.2013.09.002).
+- **Descripción:** Benchmark académico de referencia para detección de defectos en bandas de acero laminadas en caliente (crazing, inclusion, patches, pitted surface, rolled-in scale, scratches).
+- **Integración:** tercera fuente del dataset de detección YOLO — 1.770 imágenes reales $200 \times 200$ con **cajas reales anotadas** en formato Pascal VOC (XML), obtenidas del [mirror en GitHub](https://github.com/siddhartamukherjee/NEU-DET-Steel-Surface-Defect-Detection) (el dataset oficial tiene archivos faltantes/corruptos; de los 1.800 originales se recuperan 1.770 pares imagen/anotación). Mapeo de clases: `crazing` $\rightarrow$ **`crack`**, `scratches` $\rightarrow$ **`scratch`**, `rolled-in_scale` / `pitted_surface` $\rightarrow$ **`rust`**, `patches` / `inclusion` $\rightarrow$ **`hole`**.
 
-| Modelo | Rol | Parámetros |
-|--------|-----|------------|
-| CNN básica (desde cero) | Baseline | 391K |
-| ResNet-18 | Transfer learning | 11.2M |
-| EfficientNet-B0 | Transfer learning — trade-off accuracy/coste | 4.0M |
-| MobileNetV3-Small | Transfer learning — ligero / edge | 1.5M |
+---
 
-Entrenamiento con pesos ImageNet (la CNN se entrena desde cero), early stopping sobre F1 macro de validación, semilla fija (42) para reproducibilidad.
+## ⚡ Entrenamiento en GPU (NVIDIA GeForce RTX 5060 Ti)
 
-## Demo web (cámara en vivo)
+Todos los modelos se entrenan con aceleración de hardware dedicada:
+- **GPU:** NVIDIA GeForce RTX 5060 Ti (CUDA 13.0 / PyTorch 2.13.0).
+- **Precisión:** Automatic Mixed Precision (AMP `float16`) para máxima velocidad y eficiencia de memoria.
+- **Optimizador:** SGD con momentum ($0.937$) y weight decay ($0.0005$).
+- **Data Augmentation Avanzada:**
+  - Variación de iluminación y tono: HSV jitter (`hsv_h=0.015`, `hsv_s=0.4`, `hsv_v=0.4`).
+  - Transformaciones geométricas: Rotaciones (`degrees=10.0`), traslación (`translate=0.1`), escalado (`scale=0.2`), flips horizontales y verticales.
+  - Multi-escala y mezcla: Mosaico multi-imagen (`mosaic=0.5`) y `mixup=0.1` para detección robusta de defectos pequeños.
+
+---
+
+## 📊 División del Dataset Combinado (Train / Val / Test)
+
+División **80/10/10 estratificada** con semilla fija (`SEED = 42`) para garantizar reproducibilidad total:
+
+| Partición | Imágenes Sintéticas | Reales (SteelDefectX) | Reales (NEU-DET) | Total Imágenes | Uso |
+|:---|:---:|:---:|:---:|:---:|:---|
+| **train** | 12.000 | 384 | 1.416 | **13.800** | Entrenamiento con Data Augmentation en GPU |
+| **val** | 1.500 | 48 | 177 | **1.725** | Early stopping y selección de mejor checkpoint |
+| **test** | 1.500 | 48 | 177 | **1.725** | Evaluación final no vista |
+| **Total** | **15.000** | **480** | **1.770** | **17.250** | |
+
+> **Nota de versionado:** el `web/detector.onnx` desplegado y las métricas de detección reportadas abajo corresponden al entrenamiento sobre este dataset de **3 fuentes** (17.250 imágenes; el split de test incluye 177 imágenes reales de NEU-DET con cajas anotadas). Una corrida histórica de 100 épocas sobre la versión anterior de 2 fuentes (`outputs/yolo/train-3`, 15.480 imágenes) alcanzó `mAP50 ≈ 0.80` en su propio split de test.
+
+---
+
+## 🤖 Arquitectura de Modelos
+
+| Modelo | Tipo | Rol | Parámetros / Tamaño |
+|:---|:---|:---|:---:|
+| **MobileNetV3-Small** | Clasificador de Dominio (Gate) | Discrimina superficie metálica vs entorno fuera de dominio | 1.5M (~6.4 MB ONNX) |
+| **YOLOv8n** | Detector de Objetos (Bounding Boxes) | Localiza y clasifica defectos individuales (`crack`, `hole`, `rust`, `scratch`) | 3.2M (~12.2 MB ONNX) |
+| **ResNet-18** | Benchmark Clasificación | Comparativa de Transfer Learning | 11.2M |
+| **EfficientNet-B0** | Benchmark Clasificación | Comparativa de Transfer Learning | 4.0M |
+| **CNN Básica** | Baseline | Red convolucional entrenada desde cero | 391K |
+
+---
+
+## 🌐 Demo Web en Tiempo Real (Cámara e Inspección)
 
 Demo interactiva desplegada en GitHub Pages: **https://simonlexrs.github.io/vision-computacional/**
 
-- Activa la cámara y enfoca una superficie metálica: la inspección corre **en vivo, 100% en el navegador** (ONNX Runtime Web). Ninguna imagen sale del dispositivo.
-- Pipeline en dos etapas: un **gate de dominio** (MobileNetV3-Small, `web/model.onnx`, 6.4 MB) decide si la escena es una superficie metálica — si no lo es, reporta "Indefinido" y no muestra detecciones — y un **detector YOLOv8n** (`web/detector.onnx`) que **localiza y clasifica cada defecto individualmente** con bounding boxes por clase (`crack`, `hole`, `rust`, `scratch`). Sin defectos, la superficie se reporta como **Normal**.
-- El modo **"Bordes por detección"** superpone los bordes Sobel **solo dentro de las cajas detectadas**, en el color de cada clase.
-- Sin cámara disponible, también acepta **subir una imagen**.
-- El clasificador se genera con `src/export_onnx.py` (paridad verificada en la exportación); el detector con `src/train_yolo.py` + export ONNX, y su paridad se verifica con `src/verify_detector_onnx.py`.
+- **Inferencia en el Cliente:** Corre 100% en el navegador utilizando **ONNX Runtime Web** con WebAssembly multi-hilo a **20–30+ FPS**. Ninguna imagen o video sale del dispositivo.
+- **Pipeline en Dos Etapas:**
+  1. **Gate de Dominio (`model.onnx`):** Filtra fondos no metálicos y escenas fuera de dominio (OOD).
+  2. **Detector YOLOv8n (`detector.onnx`):** Si la superficie es válida, detecta y acota cada defecto individualmente. Si no hay defectos, reporta claramente **`Normal — sin defectos` (Verde)**.
+- **Lupa / Zoom de Inspección (1×, 1.5×, 2×, 3×):** Proyecta sub-regiones ROI en alta densidad al tensor YOLO ($256 \times 256$) para detectar defectos milimétricos y micro-fisuras.
+- **Modo Maximizado Inmersivo (HUD):** Permite ver la cámara a pantalla completa (`100vw × 100dvh`) con controles flotantes de zoom, bordes Sobel por clase y métricas de FPS en tiempo real.
+- **Filtros Anti-Ruido Calibrados:** Protección contra falsos positivos nocturnos en sensor ISO y calibración por clase (umbral general al 35%, óxido al 50%).
 
-### Detector YOLOv8n (localización individual)
+---
 
-El dataset no trae bounding boxes (es de clasificación), pero `metadata.csv` guarda posición y tamaño aproximados de cada defecto. `src/prepare_yolo_dataset.py` deriva cajas reales refinándolas con segmentación OpenCV (fondo por mediana → diferencia → contornos asociados a cada centro) y genera `yolo_dataset/` en formato YOLO (hard links, sin duplicar imágenes; `normal` queda como background):
+## 🚀 Pipeline de Ejecución y Entrenamiento
 
+### 1. Ingesta y Descarga de Datasets
 ```bash
-python src/prepare_yolo_dataset.py   # genera yolo_dataset/ + muestra visual de validación
-python src/train_yolo.py             # entrena YOLOv8n (imgsz=256) y evalúa en test
-# Exportar para la web:
-yolo export model=outputs/yolo/train/weights/best.pt format=onnx imgsz=256 opset=17 simplify=True
-python src/verify_detector_onnx.py   # paridad ONNX vs PyTorch
+# Descarga datasets reales de defectos (SteelDefectX + NEU-DET)
+python src/download_datasets.py
+
+# Construye el dataset combinado yolo_dataset/ con cajas refinadas
+python src/prepare_combined_dataset.py
 ```
 
-> Reserva metodológica: las etiquetas del detector se derivan de metadatos aproximados del generador; las métricas de detección (mAP) son exploratorias, no un benchmark estándar.
+### 2. Entrenamiento en GPU (RTX 5060 Ti)
 
-## Instalación y ejecución desde cero
-
-Los siguientes pasos permiten descargar y preparar el proyecto en una computadora por primera vez.
-
-### 1. Crear una carpeta de trabajo
-
-Abrir una terminal y crear una carpeta donde se almacenará el proyecto. Por ejemplo:
+El entrenamiento de **todos** los modelos —clasificadores (CNN, ResNet-18, EfficientNet-B0, MobileNetV3-Small) **y el detector YOLOv8n**— está integrado en el notebook [`entrenar_modelos.ipynb`](entrenar_modelos.ipynb) (Sección 15 para YOLO). Para reproducirlo sin abrir Jupyter, los scripts equivalentes por línea de comandos son:
 
 ```bash
-mkdir -p ~/proyectos/vision_computacional
-cd ~/proyectos/vision_computacional
-```
+# Entrenar YOLOv8n en GPU CUDA (device=0)
+python src/train_yolo.py
 
-> La ubicación y el nombre de esta carpeta son libres. Lo importante es ubicarse dentro de ella antes de clonar el repositorio.
-
-### 2. Clonar el repositorio
-
-Descargar el proyecto desde GitHub:
-
-```bash
-git clone https://github.com/SimonLexRS/vision-computacional.git
-```
-
-Ingresar al repositorio descargado:
-
-```bash
-cd vision-computacional
-```
-
-Para comprobar que el repositorio se clonó correctamente:
-
-```bash
-git status
-```
-
-Debería indicar que se está trabajando sobre la rama `main`.
-
-### 3. Crear y activar un entorno de Python
-
-Se recomienda utilizar un entorno virtual para mantener aisladas las dependencias del proyecto.
-
-Con `venv`:
-
-```bash
-python3 -m venv .venv
-```
-
-En Linux / Ubuntu / WSL:
-
-```bash
-source .venv/bin/activate
-```
-
-En Windows PowerShell:
-
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-También puede utilizarse un entorno Conda equivalente.
-
-### 4. Instalar las dependencias
-
-Con el entorno activado:
-
-```bash
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-
-
-El proyecto puede ejecutarse en CPU. Si existe una GPU NVIDIA compatible con CUDA, el entrenamiento puede aprovecharla según la configuración utilizada.
-
-### 5. Actualizar el proyecto
-
-Si el repositorio ya fue clonado anteriormente, no es necesario volver a descargarlo. Desde la carpeta del proyecto:
-
-```bash
-git switch main
-git pull origin main
-```
-
-Esto actualiza la copia local con los últimos cambios disponibles en la rama principal.
-
-### Flujo Git para colaboradores
-
-Para realizar modificaciones se recomienda crear una rama nueva en lugar de trabajar directamente sobre `main`:
-
-```bash
-git switch -c nombre-de-la-rama
-```
-
-Después de realizar los cambios:
-
-```bash
-git status
-git add nombre_del_archivo
-git commit -m "Descripción breve del cambio"
-git push -u origin nombre-de-la-rama
-```
-
-Finalmente, desde GitHub se crea un **Pull Request** de la nueva rama hacia `main` para revisar e integrar los cambios.
-
-> `git commit` guarda los cambios localmente, `git push` los envía a GitHub y el Pull Request propone incorporarlos a la rama principal.
-
-
-## Cómo ejecutar
-
-### Entrenamiento (línea de comandos, sin Jupyter)
-
-```bash
-# Reproduce el resultado del informe (los defaults son los hiperparámetros reportados)
+# Reentrenar clasificador MobileNetV3 en GPU
 python src/train.py --datos industrial_defect_dataset/ --salida outputs/checkpoints/
-
-# Entrenar solo un modelo, p. ej.:
-python src/train.py --modelos mobilenet_v3_small --epochs 20
 ```
 
-### Evaluación sobre test
+> Ambas vías (notebook y script) usan exactamente los mismos hiperparámetros: `imgsz=256`, SGD momentum `0.937`, weight decay `0.0005`, AMP, seed `42` y la misma data augmentation (HSV jitter, rotación, traslación, escalado, flips, mosaico y mixup). El entrenamiento de YOLO usa **early stopping** (`patience`): si el mAP50 de validación deja de mejorar durante varias épocas, el entrenamiento se detiene antes de llegar al máximo de épocas.
 
+### 3. Exportación y Verificación ONNX
 ```bash
-python src/evaluate.py --modelo outputs/checkpoints/mobilenet_v3_small_best.pt \
-    --datos industrial_defect_dataset/ --split test
+# Exportar detector a ONNX (exporta, copia a web/ y verifica paridad)
+python src/export_detector_onnx.py --checkpoint outputs/yolo/train/weights/best.pt --salida web/detector.onnx
+
+# Exportar clasificador Gate a ONNX
+python src/export_onnx.py --checkpoint outputs/checkpoints/mobilenet_v3_small_best.pt --salida web/model.onnx
+
+# Verificar paridad numérica ONNX vs PyTorch (por separado)
+python src/verify_detector_onnx.py --pt outputs/yolo/train/weights/best.pt --onnx web/detector.onnx
 ```
 
-### Inferencia
+---
 
-```bash
-# CPU por defecto; acepta una imagen o una carpeta
-python src/predict.py --modelo outputs/checkpoints/mobilenet_v3_small_best.pt \
-    --imagen industrial_defect_dataset/test/crack/
-```
+## 📈 Resultados y Métricas de Evaluación
 
-O con el notebook sin GPU (carga los pesos con `map_location="cpu"`):
+Evaluación sobre el split de **Test** final ($1.725$ imágenes, dataset de 3 fuentes — ver nota de versionado arriba):
 
-```bash
-jupyter notebook notebooks/inferencia_cpu.ipynb
-```
+### Detector YOLOv8n (Dataset Combinado)
 
-### Exportar el modelo para la demo web
+Resultado del entrenamiento reproducible (notebook Sección 15 / `python src/train_yolo.py`, 60 épocas, `imgsz=256`, SGD, seed `42`) evaluado sobre el split de test:
 
-```bash
-python src/export_onnx.py --checkpoint outputs/checkpoints/mobilenet_v3_small_best.pt \
-    --salida web/model.onnx
-```
+- **mAP50:** `0.739`
+- **mAP50-95:** `0.488`
+- **Precisión:** `0.754`
+- **Recall:** `0.663`
+- **AP50 por Clase:**
+  - `crack`: **0.791**
+  - `hole`: **0.846**
+  - `rust`: **0.677**
+  - `scratch`: **0.643**
 
-### Edge detection en vivo (OpenCV, sin clasificación)
+> **Este es el checkpoint desplegado en la demo web** (`web/detector.onnx`, paridad ONNX↔PyTorch verificada con IoU medio 1.000). Nota de comparación: la corrida histórica de 100 épocas sobre el dataset de 2 fuentes (`outputs/yolo/train-3`) reportó `mAP50 ≈ 0.80`, pero sobre un split de test distinto (sin las 177 imágenes reales de NEU-DET, que elevan la dificultad del benchmark al usar cajas anotadas reales). El entrenamiento usa **early stopping** (`patience=15`); en la corrida reportada la métrica siguió mejorando y se completaron las 60 épocas (1.15 h en la RTX 5060 Ti).
 
-Script independiente (`src/edge_detection.py`) que muestra **solo los bordes** del stream de la cámara — sin bounding boxes ni etiquetas. Usa el enfoque clásico **Canny** (grises → desenfoque gaussiano → Canny): corre en CPU a >30 FPS sin descargar modelos. Para migrar a una red (HED/DexiNed) basta reemplazar la función `detect_edges()`.
+### Modelos de Clasificación (Transfer Learning)
+- **MobileNetV3-Small:** Test F1-Macro = `1.0000` (100% de exactitud, 1.5M parámetros).
+- **ResNet-18:** Test F1-Macro = `1.0000` (11.2M parámetros).
+- **EfficientNet-B0:** Test F1-Macro = `1.0000` (4.0M parámetros).
+- **CNN Básica (Desde Cero):** Test F1-Macro = `0.9987`.
 
-```bash
-pip install -r requirements.txt          # incluye opencv-python
-python src/edge_detection.py             # webcam 0, bordes en verde sobre la imagen
-python src/edge_detection.py --mode map  # mapa de bordes blanco/negro
-python src/edge_detection.py --source "rtsp://usuario:pass@ip/..."  # cámara IP
-python src/edge_detection.py --save salida.mp4                      # grabar salida
-python src/edge_detection.py --selftest  # sin cámara: prueba con una imagen de test
-```
+---
 
-Ajuste de parámetros: `--t1`/`--t2` (umbrales de Canny, defaults 60/160 — súbelos si hay bordes de ruido, bájalos si se pierden bordes tenues) y `--blur` (kernel gaussiano, default 5 — más alto = menos ruido, bordes más gruesos). En vivo: `m` alterna overlay/mapa, `+`/`-` ajustan `t1`, `q`/ESC sale.
+## 📄 Licencia y Atribución
 
-> **Pesos entrenados:** los `.pt` no están versionados (carpeta `outputs/` en `.gitignore`).
-> Para obtenerlos sin reentrenar: <!-- TODO(equipo): subir mobilenet_v3_small_best.pt a Drive/HF y pegar la URL -->
-> `gdown <URL_DEL_MODELO> -O outputs/checkpoints/mobilenet_v3_small_best.pt`.
-> Alternativamente, `python src/train.py` los regenera con los mismos resultados (semilla 42 fijada).
-
-Requisitos: Python 3.12+, PyTorch (CUDA opcional — `train.py` y el notebook usan GPU si está disponible; `evaluate.py`, `predict.py` e `inferencia_cpu.ipynb` corren en CPU). El notebook de entrenamiento completo también puede ejecutarse desde Jupyter: `jupyter notebook entrenar_modelos.ipynb` (`DEVICE_MODE = "cuda"` por defecto; puede cambiarse a `"auto"`, `"cpu"` o `"mps"`).
-
-Estructura relevante:
-
-```
-├── industrial_defect_dataset/   # train/ + val/ + test/
-├── entrenar_modelos.ipynb       # pipeline completo: datos, entrenamiento, evaluación e interpretación
-├── notebooks/
-│   └── inferencia_cpu.ipynb     # inferencia CPU-only con el modelo entrenado
-├── src/                         # scripts CLI (argparse, semillas fijadas)
-│   ├── train.py                 # entrena y guarda checkpoints
-│   ├── evaluate.py              # métricas sobre test/ o val/
-│   ├── predict.py               # inferencia sobre imagen o carpeta (CPU)
-│   ├── export_onnx.py           # exporta el clasificador a ONNX para la demo web
-│   ├── prepare_yolo_dataset.py  # deriva bounding boxes (metadata + OpenCV) → yolo_dataset/
-│   ├── train_yolo.py            # entrena el detector YOLOv8n y evalúa en test
-│   ├── verify_detector_onnx.py  # paridad del detector ONNX vs PyTorch
-│   ├── edge_detection.py        # edge detection en vivo (Canny, OpenCV)
-│   └── common.py                # arquitecturas, transforms y utilidades compartidas
-├── web/                         # demo web estática (GitHub Pages + ONNX Runtime Web)
-├── docs/figures/                # gráficos del experimento (curvas, matrices de confusión)
-├── DOCUMENTO_PROYECTO.md
-└── requirements.txt             # versiones fijadas
-```
-
-## Resultados
-
-Métricas del último entrenamiento (`outputs/experiment_config.json` y `outputs/test_summary.csv`, no versionados). La selección del mejor checkpoint se hizo sobre **validación**; el conjunto de **test** se usó una sola vez, al final.
-
-| Modelo | Epochs | Tiempo (min) | Val F1 macro | Test accuracy | Test F1 macro |
-|--------|--------|--------------|--------------|---------------|----------------|
-| ResNet-18 | 7 | 7.9 | 1.0000 | 1.0000 | 1.0000 |
-| EfficientNet-B0 | 6 | 7.8 | 1.0000 | 1.0000 | 1.0000 |
-| MobileNetV3-Small | 6 | 5.9 | 1.0000 | 1.0000 | 1.0000 |
-| CNN básica | 17 | 18.8 | 0.9993 | 0.9987 | 0.9987 |
-
-**Lectura de resultados:** no hay brecha val → test (buena generalización, sin sobreajuste a la partición de validación). Los tres modelos con transfer learning alcanzan el 100% en test; la CNN baseline comete los únicos 2 errores del experimento (un `crack` y un `rust` clasificados como `normal`). MobileNetV3-Small iguala a ResNet-18 con ~7× menos parámetros y es el candidato recomendado para despliegue en hardware limitado.
-
-### Detector YOLOv8n (localización individual, demo web)
-
-Entrenado con etiquetas derivadas de `metadata.csv` + refinamiento OpenCV (`src/prepare_yolo_dataset.py`), evaluado sobre el mismo split test (`outputs/yolo/results.json`):
-
-| Modelo | mAP50 | mAP50-95 | Precisión | Recall |
-|--------|-------|----------|-----------|--------|
-| YOLOv8n (imgsz 256) | 0.799 | 0.564 | 0.778 | 0.746 |
-
-AP50 por clase: `crack` 0.968 · `hole` 0.897 · `rust` 0.713 · `scratch` 0.619. Las etiquetas aproximadas (cajas derivadas, no anotación manual) hacen de techo: defectos difusos o fragmentados (`rust`, `scratch`) penalizan más. Métricas exploratorias, no un benchmark de detección estándar.
-
-> Nota de honestidad: que 3 de 4 modelos lleguen al 100% indica que el dataset sintético es relativamente fácil frente al caso real (defectos grandes, alto contraste, sin ruido de sensor). Estas métricas son una cota superior bajo condiciones ideales, no una estimación de producción. El análisis completo está en las celdas de interpretación del notebook (secciones 8.1, 9, 10, 11, 12 y 14).
-
-### Imágenes procesadas (batch de entrenamiento)
-
-![Muestras de entrenamiento](docs/figures/sample_batch.png)
-
-### Curvas de entrenamiento (train vs val)
-
-| CNN básica | ResNet-18 |
-|---|---|
-| ![CNN loss](docs/figures/cnn_baseline_loss.png) | ![ResNet-18 loss](docs/figures/resnet18_loss.png) |
-| ![CNN accuracy](docs/figures/cnn_baseline_accuracy.png) | ![ResNet-18 accuracy](docs/figures/resnet18_accuracy.png) |
-
-| EfficientNet-B0 | MobileNetV3-Small |
-|---|---|
-| ![EfficientNet loss](docs/figures/efficientnet_b0_loss.png) | ![MobileNet loss](docs/figures/mobilenet_v3_small_loss.png) |
-| ![EfficientNet accuracy](docs/figures/efficientnet_b0_accuracy.png) | ![MobileNet accuracy](docs/figures/mobilenet_v3_small_accuracy.png) |
-
-### Matrices de confusión (sobre test)
-
-| CNN básica | ResNet-18 |
-|---|---|
-| ![CNN confusion](docs/figures/cnn_baseline_confusion_matrix.png) | ![ResNet-18 confusion](docs/figures/resnet18_confusion_matrix.png) |
-
-| EfficientNet-B0 | MobileNetV3-Small |
-|---|---|
-| ![EfficientNet confusion](docs/figures/efficientnet_b0_confusion_matrix.png) | ![MobileNet confusion](docs/figures/mobilenet_v3_small_confusion_matrix.png) |
-
-## Licencia
-
-Dataset bajo **CC BY 4.0** (atribución a Tatheer Abbas). Código del proyecto para uso académico del módulo.
+- **Datasets:**
+  - [Synthetic Industrial Metal Surface Defects](https://www.kaggle.com/datasets/tatheerabbas/synthetic-industrial-metal-surface-defects) bajo licencia **CC BY 4.0** (Tatheer Abbas).
+  - [SteelDefectX](https://huggingface.co/datasets/Zhaosxian/SteelDefectX) (Zhao et al., 2024).
+  - [NEU-DET Database](http://faculty.neu.edu.cn/yunhyan/NEU_surface_defect_database.html) (Song & Yan, Northeastern University).
+- **Código y Modelos:** Proyecto desarrollado por **Simon Alex Rodriguez** para la Maestría en Inteligencia Artificial (Módulo de Visión Computacional).

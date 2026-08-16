@@ -18,6 +18,7 @@ Rubrica.md
 AGENTS.md
 # Dataset de detección generado (hard links regenerables con src/prepare_yolo_dataset.py)
 yolo_dataset/
+external_datasets/
 # Pesos pretrained que descarga ultralytics al entrenar
 /*.pt
 # Artefactos de evaluación de ultralytics fuera de outputs/

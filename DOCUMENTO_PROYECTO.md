@@ -106,7 +106,7 @@ Estos campos permiten análisis secundarios (robustez ante textura/iluminación,
 1. **Datos sintéticos:** facilitan volumen y balance, pero puede existir *sim-to-real gap* si se despliega en piezas reales.
 2. **Transfer learning:** los pesos ImageNet esperan 3 canales; conviene replicar el canal grayscale a RGB (`L → RGB`) o adaptar la primera capa convolucional.
 3. **Sin split test oficial:** el dataset solo define `train`/`val`. Para reporte final se puede reservar un hold-out desde `train` o tratar `val` como test y validar con cross-validation estratificada.
-4. **Sin máscaras de segmentación:** no es un dataset de detección/segmentación por diseño. Aun así, `defect_positions` / `defect_sizes_px` permitieron derivar bounding boxes aproximadas (refinadas con segmentación OpenCV) con las que se entrenó un detector YOLOv8n para la demo web — con reservas metodológicas: las métricas de detección son exploratorias, no un benchmark estándar.
+4. **Sin máscaras de segmentación:** no es un dataset de detección/segmentación por diseño. Aun así, `defect_positions` / `defect_sizes_px` permitieron derivar bounding boxes aproximadas (refinadas con segmentación OpenCV) con las que se entrenó un detector YOLOv8n para la demo web (entrenamiento integrado en `entrenar_modelos.ipynb`, Sección 15, y en `src/train_yolo.py`) — con reservas metodológicas: las métricas de detección son exploratorias, no un benchmark estándar.
 
 ---
 
@@ -145,7 +145,7 @@ Protocolo común:
 
 - **ConvNeXt / ViT:** si el baseline CNN ya satura y se busca empujar accuracy o un estudio de arquitecturas.
 - **PatchCore / PaDiM:** si el interés industrial es “¿hay anomalía?” sin tipificar el defecto, o para comparar supervisión completa vs detección de anomalías.
-- **Segmentación / detección (U-Net, YOLO):** implementada a nivel exploratorio en la demo web: YOLOv8n entrenado con etiquetas derivadas de metadata (`src/train_yolo.py`), con las reservas metodológicas de la sección 3.3.
+- **Detección de objetos (YOLO):** implementada a nivel exploratorio en la demo web. YOLOv8n se entrena sobre el dataset combinado `yolo_dataset/` (imágenes sintéticas con bounding boxes derivadas de `defect_positions` / `defect_sizes_px` y refinadas por segmentación OpenCV, más imágenes reales de SteelDefectX y de NEU-DET — estas últimas con cajas reales anotadas en formato Pascal VOC). El entrenamiento está integrado en **`entrenar_modelos.ipynb` (Sección 15. Detección de objetos con YOLOv8n)** y también es reproducible por línea de comandos con `python src/train_yolo.py` (ambos usan los mismos hiperparámetros: imgsz=256, SGD momentum 0.937, AMP, data augmentation HSV/mosaico/mixup). Con las reservas metodológicas de la sección 3.3: las cajas de las imágenes sintéticas no provienen de anotación humana, por lo que las métricas de detección (mAP50, mAP50-95, AP por clase) son exploratorias y no un benchmark estándar. El checkpoint desplegado en la web (`outputs/yolo/train`, mAP50 = 0.739) se entrenó sobre el dataset de 3 fuentes; una corrida histórica de 100 épocas sobre la versión de 2 fuentes (`outputs/yolo/train-3`) alcanzó mAP50 ≈ 0.80 en su propio split de test.
 
 ---
 
