@@ -31,12 +31,34 @@
         <canvas id="edges-overlay" class="layer" hidden></canvas>
         <canvas id="detect-overlay" class="layer" hidden></canvas>
         <div class="roi-guide" id="roi-guide" hidden></div>
+        
+        <!-- HUD Superior -->
         <div class="prediction-chip" id="prediction-chip" hidden>
           <span class="chip-dot" id="chip-dot"></span>
           <span class="chip-class" id="chip-class">—</span>
           <span class="chip-conf" id="chip-conf">—</span>
         </div>
-        <div class="det-count" id="det-count" hidden>0 defectos</div>
+        <div class="hud-top-right">
+          <div class="det-count" id="det-count" hidden>0 defectos</div>
+          <button id="btn-hud-close" class="hud-btn hud-btn--close" title="Salir de pantalla completa" hidden>✕</button>
+        </div>
+
+        <!-- HUD Flotante de Zoom (Lupa para defectos pequeños) -->
+        <div class="zoom-toolbar" id="zoom-toolbar" hidden>
+          <span class="zoom-label">🔍 Zoom:</span>
+          <button class="zoom-pill active" data-zoom="1.0">1×</button>
+          <button class="zoom-pill" data-zoom="1.5">1.5×</button>
+          <button class="zoom-pill" data-zoom="2.0">2×</button>
+          <button class="zoom-pill" data-zoom="3.0">3×</button>
+        </div>
+
+        <!-- HUD Inferior en Modo Maximizado -->
+        <div class="hud-bottom-bar" id="hud-bottom-bar" hidden>
+          <button id="btn-hud-edges" class="hud-action-btn">Bordes</button>
+          <span class="hud-metrics-pill" id="hud-metrics">FPS: —</span>
+          <button id="btn-hud-camera" class="hud-action-btn hud-action-btn--primary">Cámara</button>
+        </div>
+
         <div class="placeholder" id="placeholder">
           <p>Apunta la cámara a una superficie metálica.</p>
           <p class="placeholder-small">La imagen se analiza en tu navegador; nada se sube a ningún servidor.</p>
@@ -46,7 +68,7 @@
       <div class="controls">
         <button id="btn-camera" class="btn btn--primary">Activar cámara</button>
         <button id="btn-edges" class="btn btn--ghost" disabled>Bordes por detección</button>
-        <button id="btn-fullscreen" class="btn btn--ghost">Pantalla completa</button>
+        <button id="btn-fullscreen" class="btn btn--ghost">⛶ Modo Maximizado</button>
         <label class="btn btn--ghost">
           Subir imagen
           <input type="file" id="file-input" accept="image/*" hidden />
@@ -93,54 +115,55 @@
 
         <div class="presets-row">
           <button class="preset-pill active" data-preset="balanced">⚡ Equilibrado</button>
+          <button class="preset-pill" data-preset="zoom_macro">🔍 Macro / Defectos Pequeños</button>
           <button class="preset-pill" data-preset="night">🌙 Nocturno / Poca Luz</button>
-          <button class="preset-pill" data-preset="outdoor">🛡️ Anti-Falsos Positivos</button>
           <button class="preset-pill" data-preset="high_prec">🎯 Alta Precisión</button>
-          <button class="preset-pill" data-preset="sensitive">🔍 Sensible</button>
+          <button class="preset-pill" data-preset="sensitive">⚡ Ultra Sensible</button>
         </div>
 
         <div class="settings-grid">
           <div class="setting-item">
             <div class="setting-head">
               <label for="slider-det-thr" class="setting-label">Confianza YOLO General</label>
-              <span class="setting-val" id="val-det-thr">55%</span>
+              <span class="setting-val" id="val-det-thr">35%</span>
             </div>
-            <input type="range" id="slider-det-thr" min="15" max="90" step="1" value="55" class="setting-slider" />
+            <input type="range" id="slider-det-thr" min="15" max="85" step="1" value="35" class="setting-slider" />
+            <span class="setting-hint">35% permite detectar grietas y rayones delgados/pequeños sin omitir anomalías.</span>
           </div>
 
           <div class="setting-item">
             <div class="setting-head">
               <label for="slider-rust-thr" class="setting-label">Umbral Específico de Óxido</label>
-              <span class="setting-val" id="val-rust-thr">65%</span>
+              <span class="setting-val" id="val-rust-thr">50%</span>
             </div>
-            <input type="range" id="slider-rust-thr" min="20" max="95" step="1" value="65" class="setting-slider" />
+            <input type="range" id="slider-rust-thr" min="20" max="95" step="1" value="50" class="setting-slider" />
             <span class="setting-hint">Exige mayor certeza en óxido para evitar falsos positivos con grano o sombras.</span>
           </div>
 
           <div class="setting-item">
             <div class="setting-head">
               <label for="slider-min-light" class="setting-label">Filtro de Luz Mínima (Noche)</label>
-              <span class="setting-val" id="val-min-light">30</span>
+              <span class="setting-val" id="val-min-light">20</span>
             </div>
-            <input type="range" id="slider-min-light" min="5" max="70" step="1" value="30" class="setting-slider" />
+            <input type="range" id="slider-min-light" min="5" max="70" step="1" value="20" class="setting-slider" />
             <span class="setting-hint">Descarta tomas con oscuridad severa donde el ruido del sensor imita óxido.</span>
           </div>
 
           <div class="setting-item">
             <div class="setting-head">
               <label for="slider-max-sat" class="setting-label">Filtro Máx. de Color/Saturación</label>
-              <span class="setting-val" id="val-max-sat">32%</span>
+              <span class="setting-val" id="val-max-sat">42%</span>
             </div>
-            <input type="range" id="slider-max-sat" min="10" max="70" step="1" value="32" class="setting-slider" />
-            <span class="setting-hint">Rechaza escenas con vegetación, ropa o colores vivos (no metálicas).</span>
+            <input type="range" id="slider-max-sat" min="10" max="70" step="1" value="42" class="setting-slider" />
+            <span class="setting-hint">Permite tonos cálidos en metal e ignora escenas con vegetación o colores vivos.</span>
           </div>
 
           <div class="setting-item">
             <div class="setting-head">
               <label for="slider-gate-hi" class="setting-label">Exigencia del Gate (Dominio)</label>
-              <span class="setting-val" id="val-gate-hi">94%</span>
+              <span class="setting-val" id="val-gate-hi">85%</span>
             </div>
-            <input type="range" id="slider-gate-hi" min="70" max="99" step="1" value="94" class="setting-slider" />
+            <input type="range" id="slider-gate-hi" min="60" max="98" step="1" value="85" class="setting-slider" />
           </div>
 
           <div class="setting-item">

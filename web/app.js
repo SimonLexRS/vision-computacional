@@ -9,22 +9,20 @@
  *   2. DETECTOR — YOLOv8n (detector.onnx), 4 clases de defecto
  *      (crack, hole, rust, scratch).
  *
- *   3. FILTROS DE CALIDAD DE ESCENA:
- *      - Iluminación mínima (anti-ruido nocturno / oscuridad extrema).
- *      - Saturación cromática máxima (anti-escenas naturales / no metálicas).
- *      - Umbral de confianza YOLO y umbral calibrado específico para óxido.
+ *   3. LUPA / ZOOM DE ALTA DEFINICIÓN:
+ *      - Permite inspeccionar defectos pequeños/milimétricos (1x, 1.5x, 2x, 3x)
+ *        mediante zoom de cámara y sub-región de alta densidad de píxeles.
  *
- *   4. BUCLE REACTIVO DE ALTA VELOCIDAD:
- *      - Utiliza `requestVideoFrameCallback` / `requestAnimationFrame` sin
- *        retrasos artificiales, logrando 20-30+ FPS en hardware estándar.
+ *   4. MODO MAXIMIZADO INMERSIVO:
+ *      - Vista en pantalla completa con controles HUD integrados.
+ *
+ *   5. DETECCIÓN ROBUSTA DE SUPERFICIES NORMALES Y FILTROS ANTI-RUIDO.
  */
 
 "use strict";
 
 const IMG_SIZE = 256;
-// Orden alfabético de ImageFolder (igual que en el entrenamiento del gate).
 const CLS_NAMES = ["crack", "hole", "normal", "rust", "scratch"];
-// Clases del detector (defects.yaml). "normal" no existe: es background.
 const DET_NAMES = ["crack", "hole", "rust", "scratch"];
 const CLASS_LABELS = {
   crack: "Grieta",
@@ -33,7 +31,6 @@ const CLASS_LABELS = {
   rust: "Óxido",
   scratch: "Rayón",
 };
-// RGB por clase para dibujo en canvas (mismos colores que tokens.css).
 const CLASS_RGB = {
   crack: [255, 92, 92],
   hole: [255, 159, 67],
@@ -44,57 +41,58 @@ const CLASS_RGB = {
 const IMAGENET_MEAN = [0.485, 0.456, 0.406];
 const IMAGENET_STD = [0.229, 0.224, 0.225];
 
-// --- Umbrales calibrables dinámicos (con persistencia en localStorage) ---
+// --- Presets y Umbrales Calibrados ---
 const PRESETS = {
   balanced: {
-    detThr: 0.55,
-    rustThr: 0.65,
-    minLight: 30,
-    maxSat: 0.32,
-    gateHi: 0.94,
+    detThr: 0.35,
+    rustThr: 0.50,
+    minLight: 20,
+    maxSat: 0.42,
+    gateHi: 0.85,
     name: "Equilibrado",
   },
+  zoom_macro: {
+    detThr: 0.30,
+    rustThr: 0.45,
+    minLight: 15,
+    maxSat: 0.45,
+    gateHi: 0.80,
+    name: "Macro / Defectos Pequeños",
+  },
   night: {
-    detThr: 0.60,
-    rustThr: 0.75,
-    minLight: 25,
-    maxSat: 0.28,
-    gateHi: 0.95,
+    detThr: 0.45,
+    rustThr: 0.65,
+    minLight: 15,
+    maxSat: 0.35,
+    gateHi: 0.90,
     name: "Nocturno / Poca Luz",
   },
-  outdoor: {
-    detThr: 0.65,
-    rustThr: 0.70,
-    minLight: 35,
-    maxSat: 0.24,
-    gateHi: 0.96,
-    name: "Anti-Falsos Positivos",
-  },
   high_prec: {
-    detThr: 0.70,
-    rustThr: 0.80,
-    minLight: 35,
-    maxSat: 0.25,
-    gateHi: 0.97,
+    detThr: 0.55,
+    rustThr: 0.70,
+    minLight: 25,
+    maxSat: 0.30,
+    gateHi: 0.94,
     name: "Alta Precisión",
   },
   sensitive: {
-    detThr: 0.40,
-    rustThr: 0.50,
-    minLight: 20,
-    maxSat: 0.45,
-    gateHi: 0.90,
-    name: "Sensible",
+    detThr: 0.25,
+    rustThr: 0.35,
+    minLight: 15,
+    maxSat: 0.50,
+    gateHi: 0.75,
+    name: "Ultra Sensible",
   },
 };
 
-let DET_THRESHOLD = 0.55;  // score mínimo general de caja YOLO (0.15 - 0.90)
-let RUST_THRESHOLD = 0.65; // score mínimo específico para óxido (0.20 - 0.95)
-let MIN_LIGHT = 30;        // luminancia media mínima (0 - 70)
-let MAX_SAT = 0.32;        // saturación media máxima permitida (0.10 - 0.70)
-let GATE_HI = 0.94;        // umbral para entrar a dominio (0.70 - 0.99)
-let GATE_LO = 0.84;        // umbral para salir de dominio (GATE_HI - 0.10)
-let ROI_SCALE = 0.95;      // escala del área de análisis en el visor
+let DET_THRESHOLD = 0.35;  // Score mínimo general para cajas YOLO (permite detectar defectos pequeños)
+let RUST_THRESHOLD = 0.50; // Score específico para óxido (filtra ruido oscuro de sensor)
+let MIN_LIGHT = 20;        // Luminancia mínima para descartar escenas oscuras (0 - 70)
+let MAX_SAT = 0.42;        // Saturación máxima (permite tonos cálidos en metal, rechaza vegetación)
+let GATE_HI = 0.85;        // Umbral para entrar a dominio
+let GATE_LO = 0.72;        // Umbral para salir de dominio
+let ROI_SCALE = 0.95;      // Escala del área de análisis
+let currentZoom = 1.0;     // Nivel de zoom activo (1.0, 1.5, 2.0, 3.0)
 const NMS_IOU = 0.45;
 const MAX_BOXES = 8;
 
@@ -153,6 +151,15 @@ const valCurLight = document.getElementById("val-cur-light");
 const fillSat = document.getElementById("fill-sat");
 const valCurSat = document.getElementById("val-cur-sat");
 
+// Elementos de HUD y Zoom
+const zoomToolbar = document.getElementById("zoom-toolbar");
+const zoomPills = document.querySelectorAll(".zoom-pill");
+const btnHudClose = document.getElementById("btn-hud-close");
+const hudBottomBar = document.getElementById("hud-bottom-bar");
+const btnHudEdges = document.getElementById("btn-hud-edges");
+const btnHudCamera = document.getElementById("btn-hud-camera");
+const hudMetrics = document.getElementById("hud-metrics");
+
 let clsSession = null;
 let detSession = null;
 let clsInput = "input";
@@ -164,10 +171,11 @@ let isStreaming = false;
 let videoFrameCallbackHandle = null;
 let animFrameHandle = null;
 let inferenceInFlight = false;
+let isMaximized = false;
 let frameCount = 0;
 let fpsWindowStart = performance.now();
+let lastFpsVal = "—";
 
-// Suavizado exponencial de probabilidades del gate
 let smoothProbs = null;
 const SMOOTHING = 0.35;
 let activeDets = [];
@@ -187,12 +195,68 @@ window.addEventListener("resize", layoutRoi);
 
 function syncVideoLayout() {
   if (!video.videoWidth || !video.videoHeight) return;
-  videoWrapper.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+  if (!isMaximized) {
+    videoWrapper.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+  }
   videoWrapper.style.setProperty("--video-ar", video.videoWidth / video.videoHeight);
   layoutRoi();
 }
 video.addEventListener("resize", syncVideoLayout);
 window.addEventListener("orientationchange", () => setTimeout(syncVideoLayout, 250));
+
+// --- Control de Zoom (Lupa para defectos pequeños) ---
+function setZoom(level) {
+  currentZoom = parseFloat(level) || 1.0;
+  zoomPills.forEach((p) => {
+    p.classList.toggle("active", parseFloat(p.dataset.zoom) === currentZoom);
+  });
+
+  // Intentar aplicar zoom óptico/hardware si la cámara lo soporta
+  if (cameraStream) {
+    const track = cameraStream.getVideoTracks()[0];
+    if (track) {
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      if (caps.zoom) {
+        const minZ = caps.zoom.min || 1;
+        const maxZ = caps.zoom.max || 3;
+        const targetZ = Math.min(maxZ, Math.max(minZ, currentZoom));
+        track.applyConstraints({ advanced: [{ zoom: targetZ }] }).catch(() => {});
+      }
+    }
+  }
+
+  // Si hay imagen estática, reanalizar con el nuevo zoom
+  if (!cameraStream && lastStaticSource) {
+    runTickWhenReady(lastStaticSource.img, lastStaticSource.w, lastStaticSource.h);
+  }
+}
+
+function initZoomEvents() {
+  zoomPills.forEach((p) => {
+    p.addEventListener("click", () => setZoom(p.dataset.zoom));
+  });
+}
+
+// --- Modo Maximizado / Pantalla Completa Inmersivo ---
+function toggleMaximizedMode(force) {
+  isMaximized = typeof force === "boolean" ? force : !isMaximized;
+  cameraPanel.classList.toggle("is-maximized", isMaximized);
+
+  if (isMaximized) {
+    btnFullscreen.textContent = "⛶ Salir de maximizado";
+    btnFullscreen.classList.add("is-on");
+    btnHudClose.hidden = false;
+    hudBottomBar.hidden = false;
+    zoomToolbar.hidden = !hasSource();
+    syncVideoLayout();
+  } else {
+    btnFullscreen.textContent = "⛶ Modo Maximizado";
+    btnFullscreen.classList.remove("is-on");
+    btnHudClose.hidden = true;
+    hudBottomBar.hidden = true;
+    syncVideoLayout();
+  }
+}
 
 // --- Persistencia y Sincronización de Umbrales ---
 function loadSavedSettings() {
@@ -204,7 +268,7 @@ function loadSavedSettings() {
     if (saved.maxSat !== undefined) MAX_SAT = saved.maxSat;
     if (saved.gateHi !== undefined) {
       GATE_HI = saved.gateHi;
-      GATE_LO = Math.max(0.60, GATE_HI - 0.10);
+      GATE_LO = Math.max(0.60, GATE_HI - 0.12);
     }
     if (saved.roiScale !== undefined) ROI_SCALE = saved.roiScale;
   } catch (e) {
@@ -264,7 +328,7 @@ function applyPreset(presetKey) {
   MIN_LIGHT = p.minLight;
   MAX_SAT = p.maxSat;
   GATE_HI = p.gateHi;
-  GATE_LO = Math.max(0.60, GATE_HI - 0.10);
+  GATE_LO = Math.max(0.60, GATE_HI - 0.12);
 
   presetPills.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.preset === presetKey);
@@ -273,7 +337,6 @@ function applyPreset(presetKey) {
   syncControlsUI();
   saveSettings();
 
-  // Si hay imagen estática, reanalizar con los nuevos umbrales
   if (!cameraStream && lastStaticSource) {
     runTickWhenReady(lastStaticSource.img, lastStaticSource.w, lastStaticSource.h);
   }
@@ -315,7 +378,7 @@ function initThresholdEvents() {
   if (sliderGateHi) {
     sliderGateHi.addEventListener("input", (e) => {
       GATE_HI = Number(e.target.value) / 100;
-      GATE_LO = Math.max(0.60, GATE_HI - 0.10);
+      GATE_LO = Math.max(0.60, GATE_HI - 0.12);
       valGateHi.textContent = `${e.target.value}%`;
       presetPills.forEach((p) => p.classList.remove("active"));
       saveSettings();
@@ -417,7 +480,6 @@ let modelsReady;
 
 async function loadModels() {
   ort.env.wasm.wasmPaths = new URL("vendor/ort/", document.baseURI).href;
-  // Multi-threading WASM para acelerar la inferencia en CPU
   const threads = Math.min(4, navigator.hardwareConcurrency || 4);
   ort.env.wasm.numThreads = threads;
 
@@ -458,13 +520,12 @@ function runTickWhenReady(source, w, h) {
   }
 }
 
-// --- Preprocesamiento y Análisis de Calidad de Escena ---
+// --- Preprocesamiento con Zoom de Alta Definición ---
 function drawRegionToCanvas(source, sx, sy, side) {
   preprocessCtx.drawImage(source, sx, sy, side, side, 0, 0, IMG_SIZE, IMG_SIZE);
   return preprocessCtx.getImageData(0, 0, IMG_SIZE, IMG_SIZE).data;
 }
 
-// Calcula métricas de iluminación y saturación para descartar tomas oscuras o escenas naturales
 function analyzeSceneQuality(pixels) {
   const n = IMG_SIZE * IMG_SIZE;
   let sumY = 0;
@@ -540,11 +601,14 @@ function pixelsToDetTensor(pixels, target) {
 }
 
 function preprocess(source, srcWidth, srcHeight) {
-  const side = Math.min(srcWidth, srcHeight);
-  const sx = (srcWidth - side) / 2;
-  const sy = (srcHeight - side) / 2;
+  const baseSide = Math.min(srcWidth, srcHeight);
+  // Con zoom activo, se recorta una sub-región más pequeña y se alimenta a 256x256,
+  // multiplicando la resolución efectiva para detectar grietas o rayones delgados
+  const zoomedSide = baseSide / currentZoom;
+  const sx = (srcWidth - zoomedSide) / 2;
+  const sy = (srcHeight - zoomedSide) / 2;
 
-  const pixels = drawRegionToCanvas(source, sx, sy, side);
+  const pixels = drawRegionToCanvas(source, sx, sy, zoomedSide);
   const clsData = new Float32Array(3 * IMG_SIZE * IMG_SIZE);
   const detData = new Float32Array(3 * IMG_SIZE * IMG_SIZE);
   pixelsToClsTensor(pixels, clsData);
@@ -553,7 +617,7 @@ function preprocess(source, srcWidth, srcHeight) {
   return {
     clsTensor: new ort.Tensor("float32", clsData, [1, 3, IMG_SIZE, IMG_SIZE]),
     detTensor: new ort.Tensor("float32", detData, [1, 3, IMG_SIZE, IMG_SIZE]),
-    crop: { sx, sy, side },
+    crop: { sx, sy, side: zoomedSide },
     pixels,
   };
 }
@@ -565,7 +629,7 @@ function softmax(logits) {
   return exps.map((x) => x / sum);
 }
 
-// --- Decode del detector (YOLOv8 [1, 4+nc, N]) con umbrales dinámicos y filtro de óxido ---
+// --- Decode del detector (YOLOv8 [1, 4+nc, N]) ---
 function decodeDetections(tensor) {
   const [, channels, n] = tensor.dims; // [1, 8, N]
   const d = tensor.data;
@@ -581,7 +645,6 @@ function decodeDetections(tensor) {
       }
     }
 
-    // Regulación de sensibilidad: el óxido utiliza un umbral estricto para evitar falsos positivos nocturnos
     const requiredThreshold = DET_NAMES[bestCls] === "rust" ? RUST_THRESHOLD : DET_THRESHOLD;
     if (bestScore < requiredThreshold) continue;
 
@@ -634,7 +697,6 @@ function toSourceCoords(d, crop) {
   };
 }
 
-// Seguimiento temporal contra parpadeo
 function track(dets) {
   const used = new Set();
   const out = dets.map((d) => {
@@ -680,7 +742,7 @@ function resetTracker() {
   prevDets = [];
 }
 
-// --- Publicación en la UI ---
+// --- Publicación en la UI y Detección de Superficies Normales ---
 function showResults(probs, dets, oodReason) {
   const bestIdx = probs ? probs.indexOf(Math.max(...probs)) : 0;
   const gateTop = probs ? CLS_NAMES[bestIdx] : "normal";
@@ -690,14 +752,18 @@ function showResults(probs, dets, oodReason) {
   let label = oodReason || "Indefinido";
   let confText = probs ? `${(gateConf * 100).toFixed(1)}%` : "—";
 
-  if (inDomain && dets.length) {
-    const top = dets[0];
-    color = `var(--color-${top.name})`;
-    label = CLASS_LABELS[top.name];
-    confText = `${(top.score * 100).toFixed(1)}%`;
-  } else if (inDomain && gateTop === "normal") {
-    color = "var(--color-normal)";
-    label = "Normal — sin defectos";
+  if (inDomain) {
+    if (dets.length > 0) {
+      const top = dets[0];
+      color = `var(--color-${top.name})`;
+      label = CLASS_LABELS[top.name];
+      confText = `${(top.score * 100).toFixed(1)}%`;
+    } else {
+      // Si está en dominio y YOLO no detecta defectos, la superficie es Normal
+      color = "var(--color-normal)";
+      label = "Normal — sin defectos";
+      confText = gateTop === "normal" ? `${(gateConf * 100).toFixed(1)}%` : "100%";
+    }
   }
 
   chip.hidden = false;
@@ -718,15 +784,12 @@ function showResults(probs, dets, oodReason) {
   if (!inDomain) {
     sysState.classList.add("is-out");
     sysStateText.textContent = oodReason || "Fuera de dominio";
-  } else if (dets.length) {
+  } else if (dets.length > 0) {
     sysState.classList.add("is-in");
     sysStateText.textContent = "En dominio — inspeccionando";
-  } else if (gateTop === "normal") {
+  } else {
     sysState.classList.add("is-in");
     sysStateText.textContent = "En dominio — sin defectos";
-  } else {
-    sysState.classList.add("is-out");
-    sysStateText.textContent = "Sin detección clara";
   }
 
   updateBars(probs);
@@ -734,7 +797,7 @@ function showResults(probs, dets, oodReason) {
   updateDetList(inDomain ? dets : []);
 }
 
-// --- Dibujo de cajas con estilo HMI industrial ---
+// --- Dibujo de cajas con estilo HMI ---
 function drawDetections(srcWidth, srcHeight, dets) {
   if (!dets.length) {
     detectCtx.clearRect(0, 0, detectOverlay.width, detectOverlay.height);
@@ -780,7 +843,7 @@ function drawDetections(srcWidth, srcHeight, dets) {
   }
 }
 
-// --- Detección de bordes (Sobel) dentro de cajas ---
+// --- Detección de bordes (Sobel) ---
 const EDGES_WIDTH = 384;
 const EDGE_THRESHOLD = 80;
 const edgeSrc = document.createElement("canvas");
@@ -825,8 +888,8 @@ function updateEdges(source, srcWidth, srcHeight, gateConfident, dets) {
         -g[i - aw - 1] - 2 * g[i - 1] - g[i + aw - 1] +
         g[i - aw + 1] + 2 * g[i + 1] + g[i + aw + 1];
       const gy =
-        -g[i - aw - 1] - 2 * g[i - 1] +
-        g[i - aw + 1] + 2 * g[i + 1] + g[i + aw + 1];
+        -g[i - aw - 1] - 2 * g[i - aw] - g[i - aw + 1] +
+        g[i + aw - 1] + 2 * g[i + aw] + g[i + aw + 1];
       mag[i] = Math.abs(gx) + Math.abs(gy);
     }
   }
@@ -866,6 +929,8 @@ function setEdges(on) {
   btnEdges.disabled = !hasSource();
   btnEdges.classList.toggle("is-on", edgesOn);
   btnEdges.textContent = edgesOn ? "Ocultar bordes" : "Bordes por detección";
+  if (btnHudEdges) btnHudEdges.classList.toggle("is-on", edgesOn);
+
   if (!edgesOn) {
     edgesCtx.clearRect(0, 0, edgesOverlay.width, edgesOverlay.height);
     edgesOverlay.hidden = true;
@@ -874,7 +939,7 @@ function setEdges(on) {
   }
 }
 
-// --- Tick de inferencia optimizado ---
+// --- Tick de inferencia ---
 async function runTick(source, srcWidth, srcHeight) {
   if (!clsSession || inferenceInFlight) return;
   inferenceInFlight = true;
@@ -882,7 +947,7 @@ async function runTick(source, srcWidth, srcHeight) {
   try {
     const { clsTensor, detTensor, crop, pixels } = preprocess(source, srcWidth, srcHeight);
 
-    // 0) Validación de calidad de escena (luminancia y saturación)
+    // 0) Validación de calidad de escena
     const quality = analyzeSceneQuality(pixels);
 
     if (quality.isTooDark) {
@@ -921,8 +986,8 @@ async function runTick(source, srcWidth, srcHeight) {
 
     const gateMax = Math.max(...smoothProbs);
     const gateTop = CLS_NAMES[smoothProbs.indexOf(gateMax)];
-    if (!inDomain && gateMax >= GATE_HI) inDomain = true;
-    else if (inDomain && gateMax < GATE_LO) inDomain = false;
+    if (!inDomain && (gateMax >= GATE_HI || gateTop === "normal")) inDomain = true;
+    else if (inDomain && gateMax < GATE_LO && gateTop !== "normal") inDomain = false;
 
     // 2) Detector YOLOv8n
     let dets = [];
@@ -936,10 +1001,11 @@ async function runTick(source, srcWidth, srcHeight) {
         .sort((a, b) => b.score - a.score)
         .map((d) => toSourceCoords(d, crop));
 
-      // Acuerdo estricto gate<->detector: si el gate es "normal", suprime cajas
-      if (gateTop === "normal") dets = [];
-      else dets = dets.filter((d) => d.name === gateTop);
-
+      // Si el gate detecta un defecto con alta certeza y el detector coincide, se filtra por clase;
+      // si no hay cajas o el gate sugiere normal, se preserva el estado
+      if (gateTop !== "normal" && gateMax >= GATE_HI) {
+        dets = dets.filter((d) => d.name === gateTop);
+      }
       dets = track(dets).slice(0, MAX_BOXES);
     } else if (!inDomain) {
       resetTracker();
@@ -958,7 +1024,9 @@ async function runTick(source, srcWidth, srcHeight) {
     frameCount++;
     const now = performance.now();
     if (now - fpsWindowStart >= 1000) {
-      fpsEl.textContent = ((frameCount * 1000) / (now - fpsWindowStart)).toFixed(1);
+      lastFpsVal = ((frameCount * 1000) / (now - fpsWindowStart)).toFixed(1);
+      fpsEl.textContent = lastFpsVal;
+      if (hudMetrics) hudMetrics.textContent = `FPS: ${lastFpsVal} · ${clsMs.toFixed(0)}+${detMs ? detMs.toFixed(0) : 0}ms`;
       frameCount = 0;
       fpsWindowStart = now;
     }
@@ -1017,6 +1085,7 @@ async function startCamera() {
   video.hidden = false;
   overlay.hidden = true;
   placeholder.style.display = "none";
+  zoomToolbar.hidden = false;
   await video.play();
 
   syncVideoLayout();
@@ -1026,10 +1095,11 @@ async function startCamera() {
   roiGuide.hidden = false;
   layoutRoi();
 
-  statusEl.textContent = "Cámara activa — inspeccionando en vivo a alta velocidad.";
+  statusEl.textContent = "Cámara activa — inspección en vivo de alta velocidad.";
   btnCamera.textContent = "Detener cámara";
   btnCamera.disabled = false;
   btnEdges.disabled = false;
+  if (btnHudCamera) btnHudCamera.textContent = "Detener";
   setPill(badgeCam, "ready");
   sysState.classList.remove("is-idle");
   sysState.classList.add("is-out");
@@ -1072,12 +1142,14 @@ function stopCamera() {
   chip.hidden = true;
   detCount.hidden = true;
   roiGuide.hidden = true;
+  zoomToolbar.hidden = true;
   smoothProbs = null;
   inDomain = false;
   resetTracker();
   activeDets = [];
   statusEl.textContent = "Cámara detenida.";
   btnCamera.textContent = "Activar cámara";
+  if (btnHudCamera) btnHudCamera.textContent = "Cámara";
   setPill(badgeCam, "idle");
   sysState.classList.remove("is-in", "is-out");
   sysState.classList.add("is-idle");
@@ -1087,7 +1159,7 @@ function stopCamera() {
   latencyDetEl.textContent = "—";
 }
 
-// --- Subir imagen (fallback sin cámara) ---
+// --- Subir imagen (fallback) ---
 function stopUploadedImage() {
   overlay.hidden = true;
 }
@@ -1103,7 +1175,10 @@ function analyzeImage(img, name) {
   ctx.drawImage(img, 0, 0, overlay.width, overlay.height);
   overlay.hidden = false;
   placeholder.style.display = "none";
-  videoWrapper.style.aspectRatio = `${overlay.width} / ${overlay.height}`;
+  zoomToolbar.hidden = false;
+  if (!isMaximized) {
+    videoWrapper.style.aspectRatio = `${overlay.width} / ${overlay.height}`;
+  }
   videoWrapper.style.setProperty("--video-ar", overlay.width / overlay.height);
   smoothProbs = null;
   resetTracker();
@@ -1135,6 +1210,7 @@ buildBars();
 buildCounts();
 loadSavedSettings();
 initThresholdEvents();
+initZoomEvents();
 modelsReady = loadModels();
 
 btnCamera.addEventListener("click", () => {
@@ -1144,24 +1220,15 @@ btnCamera.addEventListener("click", () => {
 fileInput.addEventListener("change", handleUpload);
 btnEdges.addEventListener("click", () => setEdges(!edgesOn));
 
-// --- Pantalla completa ---
-if (!document.fullscreenEnabled) {
-  btnFullscreen.hidden = true;
+btnFullscreen.addEventListener("click", () => toggleMaximizedMode());
+if (btnHudClose) btnHudClose.addEventListener("click", () => toggleMaximizedMode(false));
+if (btnHudCamera) {
+  btnHudCamera.addEventListener("click", () => {
+    if (cameraStream) stopCamera();
+    else startCamera();
+  });
 }
-btnFullscreen.addEventListener("click", async () => {
-  try {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else await cameraPanel.requestFullscreen();
-  } catch (err) {
-    console.error("No se pudo cambiar pantalla completa:", err);
-  }
-});
-document.addEventListener("fullscreenchange", () => {
-  btnFullscreen.textContent = document.fullscreenElement
-    ? "Salir de pantalla completa"
-    : "Pantalla completa";
-  layoutRoi();
-});
+if (btnHudEdges) btnHudEdges.addEventListener("click", () => setEdges(!edgesOn));
 
 // Ganchos de prueba
 const urlParams = new URLSearchParams(location.search);
