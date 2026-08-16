@@ -4,29 +4,39 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Inspector de Defectos — Visión Computacional</title>
-  <meta name="description" content="Demo en vivo: clasificación de defectos en superficies metálicas con MobileNetV3-Small + ONNX Runtime Web. La inferencia ocurre 100% en tu navegador." />
+  <meta name="description" content="Demo en vivo: detección individual de defectos en superficies metálicas con YOLOv8n + MobileNetV3-Small, 100% en tu navegador con ONNX Runtime Web." />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="site-header">
-    <div>
-      <h1>Inspector de Defectos</h1>
-      <p class="subtitle">Clasificación de superficies metálicas en vivo — MobileNetV3-Small + ONNX Runtime Web</p>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-glyph" aria-hidden="true"></span>
+      <div>
+        <h1 class="brand-title">Inspector de Defectos</h1>
+        <p class="brand-sub">detección en vivo · YOLOv8n + gate MobileNetV3 · ONNX Runtime Web</p>
+      </div>
     </div>
-    <span class="badge" id="engine-badge">cargando modelo…</span>
+    <div class="status-pills">
+      <span class="pill is-loading" id="badge-cls"><span class="pill-dot"></span>CLS</span>
+      <span class="pill is-loading" id="badge-det"><span class="pill-dot"></span>DET</span>
+      <span class="pill" id="badge-cam"><span class="pill-dot"></span>CAM</span>
+    </div>
   </header>
 
   <main class="layout">
     <section class="panel camera-panel" id="camera-panel">
       <div class="video-wrapper" id="video-wrapper">
         <video id="video" playsinline muted></video>
-        <canvas id="overlay" width="256" height="256" hidden></canvas>
-        <canvas id="edges-overlay" hidden></canvas>
+        <canvas id="overlay" class="layer" width="256" height="256" hidden></canvas>
+        <canvas id="edges-overlay" class="layer" hidden></canvas>
+        <canvas id="detect-overlay" class="layer" hidden></canvas>
         <div class="roi-guide" id="roi-guide" hidden></div>
         <div class="prediction-chip" id="prediction-chip" hidden>
+          <span class="chip-dot" id="chip-dot"></span>
           <span class="chip-class" id="chip-class">—</span>
           <span class="chip-conf" id="chip-conf">—</span>
         </div>
+        <div class="det-count" id="det-count" hidden>0 defectos</div>
         <div class="placeholder" id="placeholder">
           <p>Apunta la cámara a una superficie metálica.</p>
           <p class="placeholder-small">La imagen se analiza en tu navegador; nada se sube a ningún servidor.</p>
@@ -34,40 +44,81 @@
       </div>
 
       <div class="controls">
-        <button id="btn-camera" class="btn btn-primary">Activar cámara</button>
-        <button id="btn-edges" class="btn btn-secondary" disabled>Detección de bordes</button>
-        <button id="btn-fullscreen" class="btn btn-secondary">Pantalla completa</button>
-        <label class="btn btn-secondary">
+        <button id="btn-camera" class="btn btn--primary">Activar cámara</button>
+        <button id="btn-edges" class="btn btn--ghost" disabled>Bordes por detección</button>
+        <button id="btn-fullscreen" class="btn btn--ghost">Pantalla completa</button>
+        <label class="btn btn--ghost">
           Subir imagen
           <input type="file" id="file-input" accept="image/*" hidden />
         </label>
       </div>
 
-      <p class="hint" id="status">Modelo: MobileNetV3-Small · entrada 256×256 · 5 clases</p>
+      <p class="hint" id="status">Gate: MobileNetV3-Small · Detector: YOLOv8n · entrada 256×256 · 4 clases de defecto</p>
     </section>
 
-    <section class="panel results-panel">
-      <h2>Probabilidades</h2>
-      <ul class="bars" id="bars">
-        <!-- Las barras se generan por JS -->
-      </ul>
-      <div class="meta">
-        <span id="fps">FPS: —</span>
-        <span id="latency">Inferencia: — ms</span>
+    <section class="panel console">
+      <div class="console-section">
+        <h2 class="section-label">Estado del sistema</h2>
+        <div class="sys-state is-idle" id="sys-state">
+          <span class="pill-dot"></span><span id="sys-state-text">Esperando entrada</span>
+        </div>
       </div>
-      <details class="about">
-        <summary>Acerca del modelo</summary>
-        <p>
-          Clasificador de defectos industriales (<em>crack, hole, normal, rust, scratch</em>)
-          entrenado con transfer learning sobre 15.000 imágenes sintéticas
-          (dataset de Kaggle, CC BY 4.0). En el conjunto de test alcanzó
-          accuracy y F1 = 1.0000.
-        </p>
-        <p>
-          Demo académica: el dataset es sintético y los resultados son una cota
-          superior bajo condiciones ideales, no una garantía en producción.
-        </p>
-      </details>
+
+      <div class="console-section">
+        <h2 class="section-label">Detecciones activas</h2>
+        <ul class="det-list" id="det-list">
+          <li class="det-empty">— sin detecciones —</li>
+        </ul>
+      </div>
+
+      <div class="console-section">
+        <h2 class="section-label">Conteo por clase</h2>
+        <div class="counts" id="counts">
+          <!-- Las celdas se generan por JS -->
+        </div>
+      </div>
+
+      <div class="console-section">
+        <h2 class="section-label">Clasificador (gate de dominio)</h2>
+        <ul class="bars" id="bars">
+          <!-- Las barras se generan por JS -->
+        </ul>
+      </div>
+
+      <div class="console-section">
+        <h2 class="section-label">Métricas</h2>
+        <div class="metrics">
+          <div class="metric"><span class="metric-value" id="fps">—</span><span class="metric-label">FPS</span></div>
+          <div class="metric"><span class="metric-value" id="latency-cls">—</span><span class="metric-label">Gate ms</span></div>
+          <div class="metric"><span class="metric-value" id="latency-det">—</span><span class="metric-label">Det ms</span></div>
+        </div>
+      </div>
+
+      <div class="console-section">
+        <details class="about">
+          <summary>Acerca del modelo</summary>
+          <p>
+            Pipeline en dos etapas, 100% en el navegador: un
+            <strong>gate de dominio</strong> (MobileNetV3-Small, 5 clases)
+            decide si la escena es una superficie metálica; si lo es, un
+            <strong>detector YOLOv8n</strong> localiza y clasifica cada
+            defecto individualmente (<em>crack, hole, rust, scratch</em>).
+            Si no hay defectos, la superficie se reporta como
+            <strong>Normal</strong>.
+          </p>
+          <p>
+            Entrenados sobre 15.000 imágenes sintéticas (dataset de Kaggle,
+            CC BY 4.0). Las cajas de entrenamiento del detector se derivaron
+            de la metadata del generador (posición/tamaño aproximados)
+            refinadas con segmentación OpenCV — son etiquetas exploratorias,
+            no un benchmark de detección estándar.
+          </p>
+          <p>
+            Demo académica: el dataset es sintético y los resultados son una
+            cota superior bajo condiciones ideales, no una garantía en producción.
+          </p>
+        </details>
+      </div>
     </section>
   </main>
 
