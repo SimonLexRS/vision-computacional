@@ -60,14 +60,31 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
 def train_model(model_name, train_loader, val_loader, class_names, args, device):
     # Reiniciar la semilla antes de cada modelo.
+    
     set_seed(args.seed)
+
+    # El DataLoader tiene su propio Generator: set_seed() reinicia el RNG global
+    # de torch, pero no ese objeto. Sin esta línea, el orden de barajado del
+    # modelo N depende de cuántas épocas corrieron los N-1 anteriores, y entrenar
+    # un modelo suelto no reproduce su fila de la tabla de resultados.
+
+    if train_loader.generator is not None:
+        train_loader.generator.manual_seed(args.seed)
 
     model = build_model(model_name, num_classes=len(class_names)).to(device)
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
+
+    # Planificador opcional. Con "none" el LR queda constante, que es la
+    # configuración con la que se obtuvieron los resultados reportados.
+    scheduler = None
+    if args.scheduler == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.epochs, eta_min=args.lr * 0.01
+        )
 
     history = {
         "epoch": [], "train_loss": [], "train_acc": [],
@@ -123,6 +140,14 @@ def train_model(model_name, train_loader, val_loader, class_names, args, device)
                         "f1_macro": val_metrics["f1_macro"],
                         "f1_weighted": val_metrics["f1_weighted"],
                     },
+                    "config": {
+                        "label_smoothing": args.label_smoothing,
+                        "scheduler": args.scheduler,
+                        "lr": args.lr,
+                        "weight_decay": args.weight_decay,
+                        "batch_size": args.batch_size,
+                        "seed": args.seed,
+                    }
                 },
                 checkpoint_path,
             )
@@ -131,6 +156,8 @@ def train_model(model_name, train_loader, val_loader, class_names, args, device)
             if epochs_without_improvement >= args.patience:
                 print("Early stopping: el F1 macro dejó de mejorar.")
                 break
+        if scheduler is not None:
+            scheduler.step()
 
     training_time = time.time() - start_time
 
@@ -167,6 +194,12 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
+
+    parser.add_argument("--label-smoothing", type=float, default=0.0,
+                        help="Suavizado de etiquetas (0.0 = desactivado, el valor reportado)")
+    parser.add_argument("--scheduler", choices=["none", "cosine"], default="none",
+                        help="Planificador de learning rate (none = el valor reportado)")
+
     parser.add_argument("--patience", type=int, default=5,
                         help="Épocas sin mejora de F1 macro antes de detener")
     parser.add_argument("--img-size", type=int, default=256)
