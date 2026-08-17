@@ -97,7 +97,7 @@ Todos los modelos se entrenan con aceleración de hardware dedicada:
 
 ---
 
-## 📊 División del Dataset Combinado (Train / Val / Test)
+## División del Dataset Combinado (Train / Val / Test)
 
 División **80/10/10 estratificada** con semilla fija (`SEED = 42`) para garantizar reproducibilidad total:
 
@@ -136,7 +136,7 @@ Demo interactiva desplegada en GitHub Pages: **https://simonlexrs.github.io/visi
 - **Modo Maximizado Inmersivo (HUD):** Permite ver la cámara a pantalla completa (`100vw × 100dvh`) con controles flotantes de zoom, bordes Sobel por clase y métricas de FPS en tiempo real.
 - **Filtros Anti-Ruido Calibrados:** Protección contra falsos positivos nocturnos en sensor ISO y calibración por clase (umbral general al 35%, óxido al 50%).
 
-### 📸 Capturas del testing (modelo desplegado)
+### Capturas del testing (modelo desplegado)
 
 Pruebas de extremo a extremo sobre la app desplegada, subiendo imágenes del split de **test** (no visto en entrenamiento) y una escena fuera de dominio:
 
@@ -363,7 +363,7 @@ Resultado del entrenamiento reproducible (notebook Sección 15 / `python src/tra
 
 ---
 
-## ⚠️ Limitaciones conocidas
+## Limitaciones conocidas
 
 - **Cajas de entrenamiento heurísticas:** en la fuente sintética y en SteelDefectX las bounding boxes se derivan de metadata + segmentación OpenCV (no de anotación humana); solo NEU-DET aporta cajas reales. Las métricas de detección son por tanto **exploratorias**, no un benchmark estándar.
 - **Dominio mayoritariamente sintético:** la clasificación perfecta (F1 = 1.0) es una **cota superior bajo condiciones ideales**; existe riesgo de *sim-to-real gap* en piezas reales.
@@ -373,7 +373,7 @@ Resultado del entrenamiento reproducible (notebook Sección 15 / `python src/tra
 
 ---
 
-## 📄 Licencia y Atribución
+## Licencia y Atribución
 
 - **Datasets:**
   - [Synthetic Industrial Metal Surface Defects](https://www.kaggle.com/datasets/tatheerabbas/synthetic-industrial-metal-surface-defects) bajo licencia **CC BY 4.0** (Tatheer Abbas).
