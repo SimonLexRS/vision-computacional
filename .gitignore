@@ -23,3 +23,7 @@ external_datasets/
 /*.pt
 # Artefactos de evaluación de ultralytics fuera de outputs/
 /runs/
+remotion.config.ts
+/presentacion-video
+# Dataset sintetico de Kaggle (descargable con src/download_synthetic_dataset.py)
+industrial_defect_dataset/

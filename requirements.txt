@@ -25,3 +25,5 @@ opencv-python==4.12.0.88
 ultralytics==8.4.120
 # Calibración del gate de dominio (src/calibrate_gate.py, imágenes OOD de skimage.data)
 scikit-image==0.26.0
+# Descarga del dataset sintetico desde Kaggle (src/download_synthetic_dataset.py)
+kagglehub>=0.3.0

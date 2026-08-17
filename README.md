@@ -52,6 +52,36 @@ Para garantizar máxima precisión y capacidad de generalización frente a textu
 - **Descripción:** Benchmark académico de referencia para detección de defectos en bandas de acero laminadas en caliente (crazing, inclusion, patches, pitted surface, rolled-in scale, scratches).
 - **Integración:** tercera fuente del dataset de detección YOLO — 1.770 imágenes reales $200 \times 200$ con **cajas reales anotadas** en formato Pascal VOC (XML), obtenidas del [mirror en GitHub](https://github.com/siddhartamukherjee/NEU-DET-Steel-Surface-Defect-Detection) (el dataset oficial tiene archivos faltantes/corruptos; de los 1.800 originales se recuperan 1.770 pares imagen/anotación). Mapeo de clases: `crazing` $\rightarrow$ **`crack`**, `scratches` $\rightarrow$ **`scratch`**, `rolled-in_scale` / `pitted_surface` $\rightarrow$ **`rust`**, `patches` / `inclusion` $\rightarrow$ **`hole`**.
 
+
+### Cómo obtener y regenerar los datos
+
+Los datasets **no se incluyen en el repositorio** (se excluyen vía `.gitignore` por su tamaño). Se descargan automáticamente con un solo comando:
+
+```bash
+# Descarga TODOS los datasets (sintético de Kaggle + reales de HuggingFace/GitHub)
+python src/download_datasets.py
+```
+
+Esto descarga y organiza:
+1. **Dataset sintético (Kaggle, 15.000 imágenes, ~356 MB):** requiere acceso a Kaggle. Necesitas:
+   - Crear un API token en [Kaggle Settings](https://www.kaggle.com/settings) → "Create New Token" → guarda `kaggle.json`.
+   - Colocarlo en `~/.kaggle/kaggle.json` (Linux/Mac) o `C:\Users\<usuario>\.kaggle\kaggle.json` (Windows).
+   - El script descarga, descomprime y divide automáticamente en `industrial_defect_dataset/{train,val,test}/`.
+2. **SteelDefectX (HuggingFace, ~480 imágenes):** se descarga automáticamente vía `huggingface_hub` (sin autenticación).
+3. **NEU-DET (GitHub mirror, ~1.770 imágenes + XML):** se descarga y descomprime automáticamente.
+
+> **Alternativa si no tienes Kaggle configurado:** descarga manualmente el dataset desde [Kaggle](https://www.kaggle.com/datasets/tatheerabbas/synthetic-industrial-metal-surface-defects), descomprime el ZIP y coloca las imágenes en `industrial_defect_dataset/` respetando la estructura `train/`, `val/`, `test/` por clase. Luego ejecuta solo los datasets reales:
+> ```bash
+> python src/download_datasets.py --solo-reales
+> ```
+
+Tras la descarga, construye el dataset combinado de detección YOLO:
+
+```bash
+python src/prepare_combined_dataset.py
+```
+
+Esto genera `yolo_dataset/` con las imágenes y etiquetas en formato YOLO, listo para entrenar.
 ---
 
 ## Entrenamiento en GPU (NVIDIA GeForce RTX 5060 Ti)
@@ -120,6 +150,112 @@ El chip superior muestra clase y confianza; el panel lateral, el conteo por clas
 
 ---
 
+## Instalación y ejecución desde cero
+
+Los siguientes pasos permiten descargar y preparar el proyecto en una computadora por primera vez.
+
+### 1. Crear una carpeta de trabajo
+
+Abrir una terminal y crear una carpeta donde se almacenará el proyecto. Por ejemplo:
+
+```bash
+mkdir -p ~/proyectos/vision_computacional
+cd ~/proyectos/vision_computacional
+```
+
+> La ubicación y el nombre de esta carpeta son libres. Lo importante es ubicarse dentro de ella antes de clonar el repositorio.
+
+### 2. Clonar el repositorio
+
+Descargar el proyecto desde GitHub:
+
+```bash
+git clone https://github.com/SimonLexRS/vision-computacional.git
+```
+
+Ingresar al repositorio descargado:
+
+```bash
+cd vision-computacional
+```
+
+Para comprobar que el repositorio se clonó correctamente:
+
+```bash
+git status
+```
+
+Debería indicar que se está trabajando sobre la rama `main`.
+
+### 3. Crear y activar un entorno de Python
+
+Se recomienda utilizar un entorno virtual para mantener aisladas las dependencias del proyecto.
+
+Con `venv`:
+
+```bash
+python3 -m venv .venv
+```
+
+En Linux / Ubuntu / WSL:
+
+```bash
+source .venv/bin/activate
+```
+
+En Windows PowerShell:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+También puede utilizarse un entorno Conda equivalente.
+
+### 4. Instalar las dependencias
+
+Con el entorno activado:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+El proyecto puede ejecutarse en CPU. Si existe una GPU NVIDIA compatible con CUDA, el entrenamiento puede aprovecharla según la configuración utilizada.
+
+### 5. Actualizar el proyecto
+
+Si el repositorio ya fue clonado anteriormente, no es necesario volver a descargarlo. Desde la carpeta del proyecto:
+
+```bash
+git switch main
+git pull origin main
+```
+
+Esto actualiza la copia local con los últimos cambios disponibles en la rama principal.
+
+### Flujo Git para colaboradores
+
+Para realizar modificaciones se recomienda crear una rama nueva en lugar de trabajar directamente sobre `main`:
+
+```bash
+git switch -c nombre-de-la-rama
+```
+
+Después de realizar los cambios:
+
+```bash
+git status
+git add nombre_del_archivo
+git commit -m "Descripción breve del cambio"
+git push -u origin nombre-de-la-rama
+```
+
+Finalmente, desde GitHub se crea un **Pull Request** de la nueva rama hacia `main` para revisar e integrar los cambios.
+
+> `git commit` guarda los cambios localmente, `git push` los envía a GitHub y el Pull Request propone incorporarlos a la rama principal.
+
+---
+
 ## Pipeline de Ejecución y Entrenamiento
 
 ### 1. Ingesta y Descarga de Datasets
@@ -155,6 +291,46 @@ python src/export_onnx.py --checkpoint outputs/checkpoints/mobilenet_v3_small_be
 
 # Verificar paridad numérica ONNX vs PyTorch (por separado)
 python src/verify_detector_onnx.py --pt outputs/yolo/train/weights/best.pt --onnx web/detector.onnx
+```
+
+### 4. Evaluación sobre test
+
+Evalúa un checkpoint `.pt` guardado sobre el split de test (o val). Determinista: sobre el mismo `.pt` y el mismo split siempre reporta las mismas métricas.
+
+```bash
+python src/evaluate.py --modelo outputs/checkpoints/mobilenet_v3_small_best.pt \
+    --datos industrial_defect_dataset/ --split test
+```
+
+> Para forzar CPU (sin GPU): añadir `--device cpu`.
+
+### 5. Inferencia en CPU (sin GPU)
+
+El script `predict.py` corre **en CPU por defecto** y acepta una imagen o una carpeta con imágenes:
+
+```bash
+# CPU por defecto; acepta una imagen o una carpeta
+python src/predict.py --modelo outputs/checkpoints/mobilenet_v3_small_best.pt \
+    --imagen industrial_defect_dataset/test/crack/
+```
+
+Alternativamente, el notebook **obligatorio de inferencia en CPU** carga los pesos con `map_location="cpu"` y corre sin GPU:
+
+```bash
+jupyter notebook notebooks/inferencia_cpu.ipynb
+```
+
+> Este notebook carga el modelo entrenado con `torch.load(ruta, map_location="cpu")`, corre un puñado de imágenes de ejemplo y visualiza el resultado — **sin asumir GPU/CUDA disponible**. Permite confirmar que el modelo funciona en cualquier máquina.
+
+### 6. Edge detection en vivo (OpenCV, sin clasificación)
+
+Script independiente (`src/edge_detection.py`) que muestra **solo los bordes** del stream de la cámara — sin bounding boxes ni etiquetas. Usa el enfoque clásico **Canny** (grises → desenfoque gaussiano → Canny): corre en CPU a >30 FPS sin descargar modelos. Para migrar a una red (HED/DexiNed) basta reemplazar la función `detect_edges()`.
+
+```bash
+pip install -r requirements.txt          # incluye opencv-python
+python src/edge_detection.py             # webcam 0, bordes en verde sobre la imagen
+python src/edge_detection.py --mode map  # mapa de bordes blanco/negro
+python src/edge_detection.py --source "rtsp://usuario:pass@ip/..."  # cámara IP
 ```
 
 ---

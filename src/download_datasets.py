@@ -210,13 +210,79 @@ def fetch_neu_det() -> None:
     print(f"  Clase '{cls}': {n} imágenes -> '{mapped}'")
 
 
+def fetch_synthetic_dataset():
+  """Descarga el dataset sintetico de Kaggle (15.000 imagenes, CC BY 4.0).
+
+  Delega en src/download_synthetic_dataset.py. Si el dataset ya existe,
+  no hace nada (idempotente).
+  """
+  from download_synthetic_dataset import dataset_ya_descargado, organizar_dataset
+  from download_synthetic_dataset import descargar_con_kagglehub, descargar_con_kaggle_cli
+
+  if dataset_ya_descargado():
+    print("Dataset sintetico ya descargado en industrial_defect_dataset/; se omite.")
+    return
+
+  print("\n--- Descargando dataset sintetico (Kaggle, CC BY 4.0) ---")
+  src_dir = None
+  try:
+    src_dir = descargar_con_kagglehub()
+  except ImportError:
+    try:
+      src_dir = descargar_con_kaggle_cli()
+    except FileNotFoundError:
+      print("\n  AVISO: No se pudo descargar el dataset sintetico de Kaggle.")
+      print("  Necesitas configurar acceso a Kaggle (kaggle.json).")
+      print("  Ver instrucciones en README.md o ejecuta:")
+      print("    python src/download_synthetic_dataset.py")
+      print("  Alternativa: descarga manual desde")
+      print("    https://www.kaggle.com/datasets/tatheerabbas/synthetic-industrial-metal-surface-defects")
+      return
+  except Exception as e:
+    print(f"\n  AVISO: Error descargando dataset sintetico: {e}")
+    print("  Puedes descargarlo manualmente desde Kaggle (ver README).")
+    return
+
+  if src_dir is not None:
+    organizar_dataset(src_dir)
+    print("Dataset sintetico listo.")
+
+
 def main():
-  print("=== Ingesta y Descarga de Datasets Reales (SteelDefectX + NEU-DET) ===")
-  records = fetch_steel_defect_x(max_per_class=120)
-  print(f"\nSteelDefectX listo: {len(records)} imágenes de defectos reales integradas.")
-  print()
-  fetch_neu_det()
-  print("\nTodos los datasets reales están listos.")
+  import argparse
+
+  parser = argparse.ArgumentParser(
+    description="Descarga TODOS los datasets del proyecto (sintetico + reales)."
+  )
+  parser.add_argument(
+    "--solo-reales", action="store_true",
+    help="Descarga solo los datasets reales (SteelDefectX + NEU-DET), no el sintetico.",
+  )
+  parser.add_argument(
+    "--solo-sintetico", action="store_true",
+    help="Descarga solo el dataset sintetico de Kaggle.",
+  )
+  args = parser.parse_args()
+
+  print("=" * 60)
+  print("  DESCARGA DE DATASETS DEL PROYECTO")
+  print("  Vision Computacional — Defectos en superficies metalicas")
+  print("=" * 60)
+
+  if not args.solo_reales:
+    fetch_synthetic_dataset()
+
+  if not args.solo_sintetico:
+    print("\n=== Descarga de Datasets Reales (SteelDefectX + NEU-DET) ===")
+    records = fetch_steel_defect_x(max_per_class=120)
+    print(f"\nSteelDefectX listo: {len(records)} imagenes de defectos reales integradas.")
+    print()
+    fetch_neu_det()
+
+  print("\n" + "=" * 60)
+  print("  TODOS LOS DATASETS ESTAN LISTOS.")
+  print("  Siguiente paso: python src/prepare_combined_dataset.py")
+  print("=" * 60)
 
 
 if __name__ == "__main__":

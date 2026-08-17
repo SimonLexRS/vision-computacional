@@ -1,0 +1,96 @@
+[
+  {
+    "tipo": "clasificacion",
+    "path": "industrial_defect_dataset\\test\\crack\\crack_00268.png",
+    "true_label": "crack",
+    "pred_label": "normal",
+    "confidence": 0.5143947005271912,
+    "hypothesis": "Grieta de bajo contraste: el modelo no detecta el defecto y clasifica como normal."
+  },
+  {
+    "tipo": "clasificacion",
+    "path": "industrial_defect_dataset\\test\\rust\\rust_01160.png",
+    "true_label": "rust",
+    "pred_label": "normal",
+    "confidence": 0.697646975517273,
+    "hypothesis": "Oxido leve o temprano: el modelo no distingue la variacion de tono del oxido inicial."
+  },
+  {
+    "tipo": "deteccion",
+    "error_type": "falso_negativo",
+    "path": "yolo_dataset\\test\\images\\crack_00022.png",
+    "hypothesis": "Falso negativo (crack): la grieta es muy fina o de bajo contraste para 256x256. La caja anotada puede ser muy estrecha."
+  },
+  {
+    "tipo": "deteccion",
+    "error_type": "falso_negativo",
+    "path": "yolo_dataset\\test\\images\\crack_00047.png",
+    "hypothesis": "Falso negativo (crack): la grieta es muy fina o de bajo contraste para 256x256. La caja anotada puede ser muy estrecha."
+  },
+  {
+    "tipo": "deteccion",
+    "error_type": "falso_negativo",
+    "path": "yolo_dataset\\test\\images\\crack_00115.png",
+    "hypothesis": "Falso negativo (crack): la grieta es muy fina o de bajo contraste para 256x256. La caja anotada puede ser muy estrecha."
+  },
+  {
+    "tipo": "deteccion",
+    "error_type": "falso_negativo",
+    "path": "yolo_dataset\\test\\images\\crack_00154.png",
+    "hypothesis": "Falso negativo (crack): la grieta es muy fina o de bajo contraste para 256x256. La caja anotada puede ser muy estrecha."
+  },
+  {
+    "tipo": "deteccion",
+    "error_type": "falso_negativo",
+    "path": "yolo_dataset\\test\\images\\crack_00202.png",
+    "hypothesis": "Falso negativo (crack): la grieta es muy fina o de bajo contraste para 256x256. La caja anotada puede ser muy estrecha."
+  },
+  {
+    "tipo": "deteccion",
+    "error_type": "falso_negativo",
+    "path": "yolo_dataset\\test\\images\\crack_00237.png",
+    "hypothesis": "Falso negativo (crack): la grieta es muy fina o de bajo contraste para 256x256. La caja anotada puede ser muy estrecha."
+  },
+  {
+    "tipo": "deteccion",
+    "error_type": "falso_negativo",
+    "path": "yolo_dataset\\test\\images\\crack_00243.png",
+    "hypothesis": "Falso negativo (crack): la grieta es muy fina o de bajo contraste para 256x256. La caja anotada puede ser muy estrecha."
+  },
+  {
+    "tipo": "deteccion",
+    "error_type": "falso_negativo",
+    "path": "yolo_dataset\\test\\images\\crack_00264.png",
+    "hypothesis": "Falso negativo (crack): la grieta es muy fina o de bajo contraste para 256x256. La caja anotada puede ser muy estrecha."
+  },
+  {
+    "tipo": "deteccion",
+    "error_type": "falso_negativo",
+    "path": "yolo_dataset\\test\\images\\crack_00326.png",
+    "hypothesis": "Falso negativo (crack): la grieta es muy fina o de bajo contraste para 256x256. La caja anotada puede ser muy estrecha."
+  },
+  {
+    "tipo": "deteccion",
+    "error_type": "falso_negativo",
+    "path": "yolo_dataset\\test\\images\\crack_00376.png",
+    "hypothesis": "Falso negativo (crack): la grieta es muy fina o de bajo contraste para 256x256. La caja anotada puede ser muy estrecha."
+  },
+  {
+    "tipo": "deteccion",
+    "error_type": "falso_negativo",
+    "path": "yolo_dataset\\test\\images\\crack_00423.png",
+    "hypothesis": "Falso negativo (crack): la grieta es muy fina o de bajo contraste para 256x256. La caja anotada puede ser muy estrecha."
+  },
+  {
+    "tipo": "deteccion",
+    "error_type": "falso_negativo",
+    "path": "yolo_dataset\\test\\images\\crack_00520.png",
+    "hypothesis": "Falso negativo (crack): la grieta es muy fina o de bajo contraste para 256x256. La caja anotada puede ser muy estrecha."
+  },
+  {
+    "tipo": "deteccion",
+    "error_type": "falso_negativo",
+    "path": "yolo_dataset\\test\\images\\crack_00525.png",
+    "hypothesis": "Falso negativo (crack): la grieta es muy fina o de bajo contraste para 256x256. La caja anotada puede ser muy estrecha."
+  }
+]

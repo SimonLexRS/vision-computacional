@@ -299,13 +299,42 @@ recall $0.663$ (Tabla~\ref{tab:det}, Fig.~\ref{fig:curvas-yolo}).
   \label{fig:pred-yolo}
 \end{figure}
 
-\textbf{Errores típicos e hipótesis.} Los errores de la CNN baseline (2 de
-1\,500) corresponden a defectos de bajo contraste. En detección, la clase
-más difícil es \texttt{scratch}: los rayones son líneas finas y alargadas
+\textbf{Errores típicos e hipótesis.} La Fig.~\ref{fig:errores} muestra
+predicciones incorrectas concretas, con hipótesis de por qué falló cada una.
+
+\textbf{Clasificación (CNN baseline, 2 errores de 1\,500):}
+\begin{itemize}[leftmargin=1.4em,itemsep=0.1em]
+  \item \texttt{crack} $\to$ \texttt{normal} (conf.\ 0.51): grieta de bajo
+    contraste que el modelo no distingue de la superficie normal. La
+    confianza es baja (0.51 vs.\ 0.38 para la clase real), indicando que el
+    modelo está cerca del límite de decisión.
+  \item \texttt{rust} $\to$ \texttt{normal} (conf.\ 0.70): óxido leve o
+    temprano con variación de tono insuficiente para que el modelo lo
+    clasifique como defecto.
+\end{itemize}
+
+\textbf{Detección YOLOv8n (261 falsos negativos de 1\,725, conf.\ $\geq$ 0.5):}
+la clase más afectada es \texttt{crack}: 13 de los 13 falsos negativos
+encontrados son grietas no detectadas. Las grietas son líneas finas y
+alargadas cuya caja anotada es muy estrecha; a $256\times256$ el defecto
+ocupa pocos píxeles y el detector no alcanza la confianza mínima (0.5).
+\texttt{scratch} sufre un problema similar: los rayones son líneas finas
 cuya caja ajustada es muy sensible a desviaciones de pocos píxeles, lo que
-castiga el AP50-95; \texttt{rust} sufre por la alta variabilidad de textura
+castiga el AP50-95. \texttt{rust} sufre por la alta variabilidad de textura
 del óxido y su solapamiento visual con manchas de otro origen, lo que exige
 un umbral específico más alto en la demo web.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{figures/predicciones_incorrectas.png}
+  \caption{Predicciones incorrectas en test. Fila superior: 2 errores de
+  clasificación (CNN baseline) --- grieta y óxido de bajo contraste
+  clasificados como normal. Filas siguientes: 13 falsos negativos del
+  detector YOLOv8n (conf.\ $\geq$ 0.5) --- todos son grietas no detectadas
+  por ser líneas finas con bajo contraste a $256\times256$. Cada imagen
+  incluye una hipótesis de por qué falló.}
+  \label{fig:errores}
+\end{figure}
 
 \subsection{Demo web (despliegue)}
 
