@@ -280,6 +280,8 @@ python src/train.py --datos industrial_defect_dataset/ --salida outputs/checkpoi
 ```
 
 > Ambas vías (notebook y script) usan exactamente los mismos hiperparámetros: `imgsz=256`, SGD momentum `0.937`, weight decay `0.0005`, AMP, seed `42` y la misma data augmentation (HSV jitter, rotación, traslación, escalado, flips, mosaico y mixup). El entrenamiento de YOLO usa **early stopping** (`patience`): si el mAP50 de validación deja de mejorar durante varias épocas, el entrenamiento se detiene antes de llegar al máximo de épocas.
+>
+> **Los pesos se guardan en `outputs/`**: los clasificadores en `outputs/checkpoints/<modelo>_best.pt` y el detector en `outputs/yolo/train/weights/best.pt` (los pesos base preentrenados en COCO también viven en `outputs/yolo/`). Para **evaluar sin reentrenar**, en `entrenar_modelos.ipynb` basta poner `ENTRENAR_YOLO = False`: la celda carga el checkpoint ya entrenado y salta el entrenamiento.
 
 ### 3. Exportación y Verificación ONNX
 ```bash
@@ -311,16 +313,26 @@ El script `predict.py` corre **en CPU por defecto** y acepta una imagen o una ca
 ```bash
 # CPU por defecto; acepta una imagen o una carpeta
 python src/predict.py --modelo outputs/checkpoints/mobilenet_v3_small_best.pt \
-    --imagen industrial_defect_dataset/test/crack/
+    --imagen notebooks/Imagenes_de_prueba/
 ```
 
-Alternativamente, el notebook **obligatorio de inferencia en CPU** carga los pesos con `map_location="cpu"` y corre sin GPU:
+El notebook **obligatorio de inferencia en CPU** —[`notebooks/inferencia_cpu.ipynb`](notebooks/inferencia_cpu.ipynb)— prueba **los dos modelos sin GPU**:
+
+1. **Clasificador MobileNetV3-Small:** carga los pesos con `torch.load(ruta, map_location="cpu")` desde `outputs/checkpoints/mobilenet_v3_small_best.pt`, clasifica las imágenes y visualiza las predicciones.
+2. **Detector YOLOv8n:** carga `outputs/yolo/train/weights/best.pt` y corre la detección forzando `device="cpu"` (el equivalente de `map_location="cpu"` en la API de Ultralytics), dibujando la caja y la clase de cada defecto.
 
 ```bash
 jupyter notebook notebooks/inferencia_cpu.ipynb
 ```
 
-> Este notebook carga el modelo entrenado con `torch.load(ruta, map_location="cpu")`, corre un puñado de imágenes de ejemplo y visualiza el resultado — **sin asumir GPU/CUDA disponible**. Permite confirmar que el modelo funciona en cualquier máquina.
+> **Imágenes de prueba incluidas en el repo:** ambas inferencias (notebook y los comandos de arriba) usan [`notebooks/Imagenes_de_prueba/`](notebooks/Imagenes_de_prueba/) — una **copia de imágenes del split de test** (12 imágenes, 3 por clase: `crack`, `hole`, `rust`, `scratch`; la clase real va como prefijo del nombre, `{clase}_NNNNN.png`). Como están versionadas en el repositorio, se puede comprobar que los modelos funcionan **sin descargar los datasets** (~356 MB) ni tener GPU.
+
+El detector también se puede probar directamente con la CLI de Ultralytics:
+
+```bash
+yolo predict model=outputs/yolo/train/weights/best.pt \
+    source=notebooks/Imagenes_de_prueba/ device=cpu
+```
 
 ### 6. Edge detection en vivo (OpenCV, sin clasificación)
 
@@ -379,4 +391,4 @@ Resultado del entrenamiento reproducible (notebook Sección 15 / `python src/tra
   - [Synthetic Industrial Metal Surface Defects](https://www.kaggle.com/datasets/tatheerabbas/synthetic-industrial-metal-surface-defects) bajo licencia **CC BY 4.0** (Tatheer Abbas).
   - [SteelDefectX](https://huggingface.co/datasets/Zhaosxian/SteelDefectX) (Zhao et al., 2024).
   - [NEU-DET Database](http://faculty.neu.edu.cn/yunhyan/NEU_surface_defect_database.html) (Song & Yan, Northeastern University).
-- **Código y Modelos:** Proyecto desarrollado por el equipo del Proyecto Final (ver [👥 Equipo](#-equipo)) para el módulo de **Visión Computacional**, Maestría en Ciencia de Datos e Inteligencia Artificial Aplicada, **Universidad Católica Boliviana**.
+- **Código y Modelos:** Proyecto desarrollado por el equipo del Proyecto Final (ver [Equipo](#equipo)) para el módulo de **Visión Computacional**, Maestría en Ciencia de Datos e Inteligencia Artificial Aplicada, **Universidad Católica Boliviana**.
