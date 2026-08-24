@@ -27,6 +27,3 @@ remotion.config.ts
 /presentacion-video
 # Dataset sintetico de Kaggle (descargable con src/download_synthetic_dataset.py)
 industrial_defect_dataset/
-/Estudio
-Estudio/
-CLAUDE.md

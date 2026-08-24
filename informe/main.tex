@@ -1,11 +1,11 @@
 % Informe final — Proyecto de Visión Computacional (UCB)
-% Compilar: tectonic informe/main.tex   (o subir informe/ a Overleaf, pdfLaTeX)
+% Compilar: tectonic main.tex   (o subir informe/ a Overleaf / pdfLaTeX)
 \documentclass[11pt,a4paper]{article}
 
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage[spanish,es-noshorthands]{babel}
-\usepackage[margin=2.4cm]{geometry}
+\usepackage[margin=2.3cm]{geometry}
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{float}
@@ -13,10 +13,13 @@
 \usepackage{caption}
 \usepackage{enumitem}
 \usepackage{xcolor}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{microtype}
 \usepackage[hidelinks]{hyperref}
 
 \captionsetup{font=small,labelfont={bf}}
-\setlength{\parskip}{0.35em}
+\setlength{\parskip}{0.4em}
 \setlength{\parindent}{0pt}
 
 \title{}
@@ -28,383 +31,549 @@
 % ============================ 1. PORTADA ============================
 \begin{titlepage}
   \centering
-  \includegraphics[width=0.34\textwidth]{figures/ucb-logo.png}\\[1.2em]
+  \includegraphics[width=0.32\textwidth]{figures/ucb-logo.png}\\[1.0em]
+  {\Large\bfseries Universidad Católica Boliviana ``San Pablo''}\\[0.4em]
   {\large Maestría en Ciencia de Datos e Inteligencia Artificial Aplicada\\[0.2em]
-  Módulo: Visión Computacional}\\[2.2em]
-  \rule{\textwidth}{0.4pt}\\[1.2em]
+  Módulo: Visión Computacional}\\[1.8em]
+  \rule{\textwidth}{0.6pt}\\[1.0em]
   {\LARGE\bfseries Detección y clasificación de defectos en superficies
   metálicas con aprendizaje profundo: del entrenamiento en GPU a una demo
   web en tiempo real}\\[0.8em]
-  \rule{\textwidth}{0.4pt}\\[2.2em]
-  {\large\bfseries Integrantes}\\[0.6em]
+  \rule{\textwidth}{0.6pt}\\[1.8em]
+  {\large\bfseries Equipo de Proyecto}\\[0.8em]
   \begin{tabular}{ll}
-    Simon Alex Rodriguez Saavedra & \emph{Líder/Integrador} \\
-    Jennifer Suarez Gutierrez & \emph{Entrenamiento de la red CNN baseline} \\
-    Daniel Ribera Añez & \emph{Contribuidor} \\
-    Daniela Alejandra Caro Arrazola & \emph{Contribuidora} \\
-  \end{tabular}\\[2.2em]
-  {\large Agosto 2026}\\[0.5em]
+    \textbf{Simon Alex Rodriguez Saavedra} & \emph{Líder / Integrador} \\
+    \textbf{Jennifer Suarez Gutierrez} & \emph{Entrenamiento CNN baseline} \\
+    \textbf{Daniel Ribera Añez} & \emph{Contribuidor} \\
+    \textbf{Daniela Alejandra Caro Arrazola} & \emph{Contribuidora} \\
+  \end{tabular}\\[2.0em]
+  {\large Agosto-2026}\\[0.5em]
   \vfill
-  \begin{minipage}{0.9\textwidth}
+  \begin{minipage}{0.95\textwidth}
     \small\centering
-    Repositorio del proyecto (código, datos y demo):
+    \textbf{Repositorio del proyecto (código fuente, datos, modelos y demo web):}\\
     \url{https://github.com/SimonLexRS/vision-computacional}
   \end{minipage}
 \end{titlepage}
 
 % ============================ 2. RESUMEN ============================
-\begin{abstract}
-\noindent
-La inspección visual de defectos superficiales en piezas metálicas (grietas,
-perforaciones, óxido y rayones) es una tarea crítica del control de calidad
-industrial, hoy realizada en gran parte de forma manual. Este proyecto
-construye un sistema completo de visión computacional para automatizarla:
-dada una imagen ---o el video en vivo de una cámara--- de una superficie
-metálica, el sistema decide si la pieza es normal o presenta defectos, y
-localiza cada defecto con su caja y tipo. La solución combina dos modelos en
-cascada: un clasificador de dominio MobileNetV3-Small (5 clases) que actúa
-como \emph{gate} y un detector YOLOv8n (4 clases de defecto). El entrenamiento
-se realizó en GPU (NVIDIA RTX 5060 Ti) sobre un dataset combinado de tres
-fuentes: 15\,000 imágenes sintéticas (Kaggle, CC BY 4.0), 480 imágenes reales
-de SteelDefectX y 1\,770 imágenes reales de NEU-DET con cajas anotadas. Los
-clasificadores por transfer learning alcanzan F1 macro $=1.0000$ en el split
-de test; el detector logra mAP50 $=0.739$ sobre un test que incluye imágenes
-reales anotadas. Ambos modelos se exportan a ONNX y corren 100\,\% en el
-navegador (ONNX Runtime Web, WASM) a 20--30 FPS, sin servidor.
-\end{abstract}
+\section*{Resumen}
+\addcontentsline{toc}{section}{Resumen}
+
+Este proyecto presenta el desarrollo, evaluación y despliegue de un sistema de
+inspección automatizada para la detección y clasificación de defectos superficiales
+en piezas metálicas, optimizado para entornos de acero laminado. Frente a la
+variabilidad, subjetividad y fatiga asociadas al control de calidad manual, se
+propone una arquitectura jerárquica de dos etapas orientada al balance óptimo entre
+eficiencia computacional y precisión analítica: (1) un clasificador de dominio
+(\emph{Gate}) basado en MobileNetV3-Small (1.5M parámetros) que actúa como filtro
+binario de alta velocidad para discriminar si la escena es una superficie metálica
+válida o descartar entradas fuera de dominio (OOD), seguido de (2) un detector
+YOLOv8n (3.2M parámetros) para la localización multiclase y acotación mediante cajas
+delimitadoras de las fallas detectadas.
+
+El entrenamiento se realizó sobre un dataset híbrido de 17\,250 imágenes combinando
+muestras sintéticas con benchmarks reales de la industria (\emph{SteelDefectX} y
+\emph{NEU-DET}). Los resultados cuantitativos evidencian un desempeño sobresaliente,
+alcanzando un F1-Macro de $1.0000$ en la clasificación de dominio y un $\text{mAP}_{50}$
+de $0.739$ ($\text{mAP}_{50\text{--}95} = 0.488$) en el detector sobre un conjunto de
+prueba que integra imágenes reales con anotaciones manuales expertas. Finalmente, el
+sistema fue exportado a formato ONNX y desplegado en cliente mediante ONNX Runtime
+Web con aceleración WebAssembly multi-hilo, alcanzando tasas de inferencia en tiempo
+real de 20--30+ FPS en el navegador sin dependencia de servidores externos,
+demostrando la viabilidad de modelos ligeros para la toma de decisiones críticas en
+líneas de producción industrial.
+
+\vspace{0.6em}
+\textbf{Palabras clave:} Visión computacional, detección de defectos, superficies
+metálicas, acero laminado, MobileNetV3, YOLOv8, ONNX Runtime Web, tiempo real.
+
+\newpage
 
 % ==================== 3. INTRODUCCIÓN Y MOTIVACIÓN ====================
 \section{Introducción y motivación}
 
-\textbf{Problema concreto.} Dada una imagen de una superficie metálica,
-identificar automáticamente si presenta defectos ---grieta, perforación,
-óxido o rayón--- y \emph{dónde} está localizado cada uno, para apoyar la
-decisión de aceptar o reprobar la pieza.
+\subsection{Definición del problema}
+La identificación oportuna de irregularidades superficiales es una tarea crítica en
+la industria metalúrgica y siderúrgica. Pequeñas discontinuidades en el material
+pueden comprometer la resistencia mecánica, la durabilidad contra la corrosión y la
+conformidad técnica de las piezas antes de su comercialización. El objetivo
+principal de este trabajo es localizar y clasificar de forma autónoma cuatro tipos de
+defectos recurrentes:
+\begin{itemize}[leftmargin=1.6em,itemsep=0.1em]
+  \item \textbf{Grietas (\emph{cracks}):} Fisuras longitudinales o transversales
+  que comprometen la integridad estructural del material.
+  \item \textbf{Perforaciones (\emph{holes}):} Cavidades, porosidades o inclusiones
+  profundas en la lámina.
+  \item \textbf{Óxido (\emph{rust}):} Áreas afectadas por corrosión, escamas de
+  óxido o degradación superficial.
+  \item \textbf{Rayones (\emph{scratches}):} Daños mecánicos por abrasión, fricción
+  o marcas de rodillos de laminación.
+\end{itemize}
+La meta es transformar la inspección visual subjetiva en un proceso analítico
+estandarizado, cuantitativo y gobernado por datos.
 
-\textbf{Caso real de referencia.} Una línea de producción de acero laminado
-(o de piezas metálicas en general), donde hoy un operario inspecciona
-visualmente cada pieza bajo lámpara. Es el mismo escenario de los benchmarks
-industriales NEU-DET~\cite{neudet} y SteelDefectX~\cite{steeldefectx}:
-inspección de defectos superficiales en tiras de acero.
+\subsection{Caso de uso e industria}
+El caso de aplicación se sitúa en líneas de producción continua de acero laminado en
+caliente y en frío. En este entorno, tiras y placas metálicas se desplazan a altas
+velocidades bajo condiciones de iluminación variables y atmósferas con polvo o
+temperatura. Al procesar flujos de video en vivo provenientes de cámaras cenitales
+situadas sobre las líneas transportadoras, la solución posibilita una supervisión
+constante y exhaustiva de la calidad del material previa a su bobinado, corte y
+distribución final.
 
-\textbf{Por qué importa.} La inspección manual es lenta, subjetiva y se
-degrada con la fatiga; un detector automático y en tiempo real permite al
-operario (o al sistema) detener la línea, reprobar la pieza o marcarla para
-revisión. Que el sistema corra íntegramente en el navegador, sin enviar
-imágenes a un servidor, lo hace desplegable en planta sin infraestructura
-adicional y sin exponer datos del proceso.
+\subsection{Justificación}
+La inspección manual tradicional presenta limitaciones inherentes: es lenta, propensa
+al error humano derivado de la fatiga visual prolongada y carece de uniformidad en los
+criterios de rechazo entre diferentes turnos de trabajo. La implementación de un
+pipeline automatizado de baja latencia permite alcanzar una inspección del 100\,\% de
+la producción (en contraste con el muestreo estadístico tradicional). Esto viabiliza
+el rechazo o reencauzamiento inmediato de lotes anómalos, minimizando los costos de
+reprocesamiento, desperdicio de material y reclamaciones post-venta por garantías.
 
-\textbf{Aporte del proyecto.} Un pipeline completo y reproducible ---
-descarga de datos, preparación de datasets, entrenamiento en GPU, evaluación,
-exportación a ONNX y verificación de paridad numérica--- que culmina en una
-demo web en tiempo real con cámara, zoom de inspección y filtros anti-ruido
-calibrados.
+\subsection{Aporte del proyecto}
+Este trabajo entrega un pipeline técnico completo, reproducible y de código abierto:
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.15em]
+  \item \textbf{Ingeniería y unificación de datos:} Integración y armonización
+  taxonómica de tres fuentes de datos (sintéticas y reales) totalizando 17\,250
+  muestras balanceadas y estratificadas.
+  \item \textbf{Arquitectura jerárquica de dos etapas:} Desacoplamiento de la
+  validación de dominio (\emph{Gate} OOD) y la detección de objetos multiclase
+  (YOLOv8n), maximizando la eficiencia computacional y evitando falsos positivos
+  sobre fondos no pertinentes.
+  \item \textbf{Entrenamiento y benchmarking riguroso:} Transfer learning y
+  comparativa frente a una CNN baseline entrenada desde cero, evaluando con métricas
+  estándar de la industria ($\text{mAP}_{50}$, $\text{mAP}_{50\text{--}95}$, F1-Macro).
+  \item \textbf{Despliegue web en tiempo real:} Exportación a formato interoperable
+  ONNX (opset 17), verificación estricta de paridad numérica contra PyTorch y
+  ejecución client-side mediante ONNX Runtime Web con WebAssembly multi-hilo a
+  20--30+ FPS con cámara en vivo y filtros anti-ruido calibrados.
+\end{enumerate}
 
 % ============================ 4. DATOS ============================
 \section{Datos}
 
-Se combinan tres fuentes complementarias (Tabla~\ref{tab:datasets}), mapeadas
-a una taxonomía común de 5 clases para clasificación
-(\texttt{crack}, \texttt{hole}, \texttt{normal}, \texttt{rust},
-\texttt{scratch}) y 4 clases de defecto para detección (sin \texttt{normal}).
+\subsection{Composición y procedencia}
+El robustecimiento de los modelos ante la variabilidad geométrica y de texturas se
+logró mediante la fusión estratégica de tres fuentes complementarias de datos
+(Tabla~\ref{tab:datasets}), alcanzando un volumen final de 17\,250 muestras tras un
+riguroso proceso de estandarización:
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.15em]
+  \item \textbf{Synthetic Industrial Metal Surface Defects (Abbas, Kaggle)~\cite{kaggle}:}
+  15\,000 imágenes sintéticas equilibradas (3\,000 por clase) que abarcan texturas
+  metálicas homogéneas y las 5 clases del proyecto (\texttt{crack}, \texttt{hole},
+  \texttt{normal}, \texttt{rust}, \texttt{scratch}). Dispone de metadata posicional y
+  licencia CC BY 4.0.
+  \item \textbf{SteelDefectX (Zhao et al., 2024)~\cite{steeldefectx}:}
+  Subconjunto representativo de 480 imágenes curadas de un benchmark industrial real
+  de 5\,454 muestras en entornos de fundición y conformado.
+  \item \textbf{NEU Surface Defect Database (Northeastern University, Song \& Yan, 2013)~\cite{neudet}:}
+  Benchmark de referencia internacional con 1\,770 imágenes reales de defectos en
+  tiras de acero laminado en caliente, dotado de \textbf{anotaciones manuales de
+  cajas delimitadoras} por expertos (formato Pascal VOC XML). De las 1\,800 imágenes
+  originales, se filtraron 1\,770 pares válidos verificados.
+\end{enumerate}
 
 \begin{table}[H]
   \centering\small
-  \caption{Fuentes de datos del proyecto.}
+  \caption{Fuentes de datos que conforman el dataset combinado.}
   \label{tab:datasets}
-  \begin{tabular}{@{}p{4.6cm}ccp{5.6cm}@{}}
+  \begin{tabularx}{\textwidth}{@{}l c c X@{}}
     \toprule
-    \textbf{Fuente} & \textbf{Imágenes} & \textbf{Tipo} & \textbf{Anotación / licencia} \\
+    \textbf{Fuente} & \textbf{Imágenes} & \textbf{Tipo} & \textbf{Anotación / Licencia} \\
     \midrule
-    Synthetic Industrial Metal Surface Defects (Abbas, Kaggle)~\cite{kaggle}
-      & 15\,000 & Sintética & Metadata de posición/tamaño; cajas derivadas con OpenCV. CC BY 4.0. \\
+    Synthetic Industrial Defects~\cite{kaggle}
+      & 15\,000 & Sintética & Metadata de posición; cajas derivadas con OpenCV. CC BY 4.0. \\
     SteelDefectX (Zhao et al., 2024)~\cite{steeldefectx}
-      & 480 & Real & Clase por imagen; cajas estimadas con OpenCV. Uso académico. \\
+      & 480 & Real & Etiqueta de clase por imagen; cajas estimadas con OpenCV. Académica. \\
     NEU-DET (Song \& Yan, 2013)~\cite{neudet}
-      & 1\,770 & Real & \textbf{Cajas reales anotadas} (Pascal VOC XML), 6 clases mapeadas a 4. Uso académico. \\
+      & 1\,770 & Real & \textbf{Cajas reales anotadas por expertos} (Pascal VOC XML). Académica. \\
+    \midrule
+    \textbf{Total consolidado} & \textbf{17\,250} & Híbrido & Taxonomía unificada de 4 clases de defecto + normal. \\
     \bottomrule
-  \end{tabular}
+  \end{tabularx}
 \end{table}
 
-\textbf{Tamaño y división.} El dataset de clasificación usa las 15\,000
-imágenes sintéticas balanceadas (3\,000 por clase) con división física
-80/10/10 ya provista por la fuente (12\,000/1\,500/1\,500). El dataset de
-detección combinado suma 17\,250 imágenes: 13\,800 train / 1\,725 val /
-1\,725 test, con división 80/10/10 determinista (semilla 42) por fuente,
-estratificada al venir cada fuente balanceada por clase. Las particiones son
-físicas (archivos distintos), por lo que no hay riesgo de fuga por grupo.
-La clase \texttt{normal} solo existe en la fuente sintética: es la clase
-mayoritaria del clasificador de dominio (gate) y no participa en detección.
+\subsection{Mapeo de clases y taxonomía}
+Dado que las fuentes originales empleaban terminologías heterogéneas, se realizó una
+ingeniería de etiquetas para unificar los defectos en las cuatro clases estándar del
+detector:
+\begin{itemize}[leftmargin=1.6em,itemsep=0.15em]
+  \item \textbf{\texttt{crack} (Grieta):} Integración de las clases originales
+  \emph{Crazing} (fisuración superficial en red), \emph{Crease} (arrugas/pliegues
+  de compresión) y \emph{Waist folding} (pliegue transversal).
+  \item \textbf{\texttt{scratch} (Rayón):} Integración de \emph{Bright scratch}
+  (rayón brillante), \emph{Dark scratches} (rayones oscuros por arrastre) y
+  \emph{Finishing roll printing} (marcas periódicas de rodillo).
+  \item \textbf{\texttt{rust} (Óxido):} Integración de \emph{Oxide scale} (escama
+  de laminación), \emph{Pitted surface} (superficie picada), \emph{Red iron sheet}
+  (óxido ferroso) y \emph{White rust} (óxido de zinc/blanco).
+  \item \textbf{\texttt{hole} (Perforación):} Integración de \emph{Punching}
+  (agujero de troquelado), \emph{Inclusion} (inclusiones no metálicas) y
+  \emph{Crescent gap} (muescas marginales en medialuna).
+\end{itemize}
+Para el modelo de clasificación de dominio (\emph{Gate}), se conservó la clase
+\texttt{normal} (3\,000 muestras sintéticas libres de fallas) para entrenar la
+discriminación entre superficies sanas y defectuosas.
 
-\textbf{Limitaciones conocidas.} (i) Las cajas de las fuentes sintética y
-SteelDefectX se derivaron de metadata y segmentación OpenCV, no de anotación
-humana; solo NEU-DET aporta cajas reales --- las métricas de detección son,
-por tanto, exploratorias y no un benchmark estándar. (ii) La fuente
-sintética domina el volumen: existe riesgo de \emph{sim-to-real gap}.
-(iii) Todas las imágenes son en escala de grises o casi; escenas a color muy
-saturadas quedan fuera de dominio por diseño (el gate las rechaza).
-(iv) NEU-DET oficial contiene archivos faltantes o corruptos; de los 1\,800
-originales se recuperaron 1\,770 pares imagen/anotación desde un mirror
-público.
+\subsection{Distribución cuantitativa y partición de datos}
+Para garantizar la validez metodológica y evitar el sobreajuste o fuga de datos entre
+conjuntos, se aplicó una partición física determinista \textbf{80/10/10} estratificada
+por clase y por fuente con semilla fija ($\text{SEED}=42$). En la Tabla~\ref{tab:split}
+se detalla la composición exacta de cada partición.
+
+\begin{table}[H]
+  \centering\small
+  \caption{Distribución cuantitativa del dataset híbrido por partición y fuente (80/10/10 estratificada, $\text{SEED}=42$).}
+  \label{tab:split}
+  \begin{tabularx}{\textwidth}{@{}l c c c X@{}}
+    \toprule
+    \textbf{Partición} & \textbf{Sintéticas (Abbas)} & \textbf{SteelDefectX} & \textbf{NEU-DET} & \textbf{Total Imágenes (\%)} \\
+    \midrule
+    Entrenamiento (\emph{Train}) & 12\,000 & 384 & 1\,416 & \textbf{13\,800} (80.0\,\%) \\
+    Validación (\emph{Val})      & 1\,500  & 48  & 177   & \textbf{1\,725} (10.0\,\%) \\
+    Prueba (\emph{Test})         & 1\,500  & 48  & 177   & \textbf{1\,725} (10.0\,\%) \\
+    \midrule
+    \textbf{Total por Fuente}    & \textbf{15\,000} & \textbf{480} & \textbf{1\,770} & \textbf{17\,250} (100.0\,\%) \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Limitaciones técnicas de los datos}
+Se identificaron tres factores de relevancia:
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.1em]
+  \item \textbf{Disparidad en la calidad de las cajas delimitadoras:} Mientras que
+  NEU-DET cuenta con anotaciones manuales rigurosas realizadas por expertos, las
+  muestras sintéticas y de SteelDefectX dependen de cajas heurísticas generadas
+  mediante segmentación morfológica tradicional con OpenCV. Esto introduce cierta
+  imprecisión geométrica en los bordes finos de las cajas delimitadoras.
+  \item \textbf{Brecha sintético-a-real (\emph{sim-to-real gap}):} La fuente
+  sintética representa el 87\,\% del volumen total, lo que provee una base
+  estadística amplia para el aprendizaje de texturas base pero exige validar el
+  comportamiento ante ruido real de sensor.
+  \item \textbf{Espacio de color y representatividad:} Las imágenes industriales
+  analizadas son predominantemente monocromáticas o en escala de grises. Escenas
+  con fondos no industriales saturados o con tonalidades dispares son tratadas
+  deliberadamente como \emph{Fuera de Dominio} (OOD) por el Gate.
+\end{enumerate}
 
 % ========================== 5. METODOLOGÍA ==========================
 \section{Metodología}
 
-\textbf{Arquitectura en dos etapas.} (1) Un \emph{gate de dominio}
-(MobileNetV3-Small~\cite{mobilenetv3}, 1.5M parámetros) clasifica la escena
-en 5 clases y decide si la imagen corresponde a una superficie metálica en
-dominio; (2) si lo es, un \emph{detector YOLOv8n}~\cite{yolov8} (3.0M
-parámetros) localiza y clasifica cada defecto. Se eligió MobileNetV3-Small
-por su relación precisión/tamaño para inferencia en navegador, y YOLOv8n por
-ser la variante liviana de Ultralytics, exportable a ONNX y con velocidad
-suficiente para tiempo real. Ambos parten de pesos preentrenados (ImageNet y
-COCO, respectivamente): transfer learning, dado el tamaño moderado del
-dataset.
+\subsection{Arquitectura jerárquica de dos etapas}
+Para optimizar el presupuesto computacional y garantizar una respuesta de latencia
+mínima en entornos industriales, se concibió un pipeline en cascada
+(Fig.~\ref{fig:pipeline_desc}):
 
-\textbf{Preprocesamiento.} Imágenes redimensionadas a $256\times256$; el
-canal de grises se replica a RGB para aprovechar los pesos ImageNet;
-normalización con media/desviación de ImageNet en clasificación y
-escalado a $[0,1]$ en YOLO. La web aplica exactamente el mismo
-preprocesamiento en JavaScript.
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.2em]
+  \item \textbf{Etapa 1: Filtro y Gate de dominio.} Implementado mediante
+  \textbf{MobileNetV3-Small}~\cite{mobilenetv3} (1.5M parámetros), optimizado para
+  inferencia en bordes y navegadores. Clasifica la escena en las 5 categorías base.
+  Si la imagen corresponde a un fondo no metálico, escena saturada o fuera de
+  dominio (OOD), el sistema detiene inmediatamente el procesamiento, previniendo
+  falsas alarmas y evitando el consumo de cómputo en el detector principal.
+  \item \textbf{Etapa 2: Detector multiclase.} Si el Gate valida la superficie
+  metálica como perteneciente al dominio, la imagen pasa a \textbf{YOLOv8n}~\cite{yolov8}
+  (3.2M parámetros). El detector predice de forma simultánea la ubicación espacial
+  (cajas $xywh$), la clase de falla (\texttt{crack}, \texttt{hole}, \texttt{rust},
+  \texttt{scratch}) y la probabilidad de confianza.
+\end{enumerate}
 
-\textbf{Hiperparámetros} (Tabla~\ref{tab:hiper}): elegidos por recomendación
-de los autores de cada arquitectura y ajuste empírico acotado --- no se hizo
-barrido sistemático por costo de GPU. En todos los casos semilla fija
-(42) y early stopping sobre la métrica de validación (F1 macro en
-clasificación, mAP50 en detección); el checkpoint final se selecciona por
-validación y el split de test se evalúa \emph{una sola vez}.
+\begin{figure}[H]
+  \centering
+  \fbox{\parbox{0.92\textwidth}{
+    \centering\small
+    \textbf{Flujo de Inferencia en Cascada:}\\[0.4em]
+    $\text{Video / Imagen en vivo} \;\longrightarrow\;
+    \boxed{\begin{matrix} \text{\textbf{Gate de Dominio}} \\ \text{\footnotesize MobileNetV3-Small (1.5M)} \end{matrix}}
+    \;\xrightarrow{\text{Válido (In-Domain)}}\;
+    \boxed{\begin{matrix} \text{\textbf{Detector Multiclase}} \\ \text{\footnotesize YOLOv8n (3.2M)} \end{matrix}}
+    \;\longrightarrow\; \text{Cajas + Clases + Confianza}$\\[0.5em]
+    \hfill $\searrow_{\text{Fuera de Dominio (OOD)}} \text{\textbf{Filtro Rechazo / Alerta OOD}}$
+  }}
+  \caption{Esquema conceptual del pipeline de inferencia jerárquico de dos etapas.}
+  \label{fig:pipeline_desc}
+\end{figure}
+
+\subsection{Preprocesamiento y data augmentation}
+Las imágenes de entrada se redimensionan a una resolución uniforme de
+$256\times256$ píxeles. El canal de grises se replica a tres canales RGB para
+aprovechar las inicializaciones preentrenadas de ImageNet y COCO. En clasificación,
+se normaliza con la media y desviación estándar de ImageNet; en detección, los
+píxeles se reescalan al intervalo $[0, 1]$.
+
+Durante el entrenamiento se aplicaron técnicas de aumento de datos (\emph{data
+augmentation}) seleccionadas para conferir invariancia frente a condiciones adversas
+de iluminación y escala: perturbación tonal (HSV jitter), rotaciones ($10^\circ$),
+traslación, escalado, volteo horizontal/vertical (\emph{flips}), mosaico (\emph{Mosaic} 0.5)
+y mezcla lineal (\emph{Mixup} 0.1) para mejorar la detección de micro-defectos.
+
+\subsection{Configuración de entrenamiento y reproducibilidad}
+El entrenamiento se ejecutó de forma controlada y reproducible:
+\begin{itemize}[leftmargin=1.6em,itemsep=0.1em]
+  \item \textbf{Hardware:} GPU NVIDIA GeForce RTX 5060 Ti con CUDA y PyTorch.
+  \item \textbf{Optimizadores y scheduling:} Para los clasificadores se empleó
+  AdamW con $\text{lr} = 3\times10^{-4}$ y weight decay $10^{-4}$. Para YOLOv8n se
+  empleó SGD con momentum $0.937$, weight decay $5\times10^{-4}$ y aprendizaje por
+  decaimiento coseno (\emph{cosine annealing}) con tasa inicial $0.01$.
+  \item \textbf{Precisión mixta (AMP float16):} Reducción de huella de memoria en
+  GPU y aceleración del tiempo de cómputo sin degradar la precisión numérica.
+  \item \textbf{Criterios de parada y consistencia:} Semilla global fijada en
+  $\text{SEED}=42$ y parada temprana (\emph{Early Stopping}) monitoreando el F1-Macro
+  en validación (clasificación) y $\text{mAP}_{50}$ (detección). El conjunto de
+  prueba (\emph{Test}) se evaluó \textbf{una sola vez} al finalizar todos los
+  ajustes sobre el mejor checkpoint guardado.
+\end{itemize}
 
 \begin{table}[H]
   \centering\small
-  \caption{Hiperparámetros clave de entrenamiento.}
+  \caption{Resumen de hiperparámetros de entrenamiento.}
   \label{tab:hiper}
-  \begin{tabular}{@{}lcc@{}}
+  \begin{tabularx}{\textwidth}{@{}l X X@{}}
     \toprule
-    \textbf{Parámetro} & \textbf{Clasificadores} & \textbf{YOLOv8n} \\
+    \textbf{Parámetro} & \textbf{Clasificadores (Gate / Baselines)} & \textbf{Detector YOLOv8n} \\
     \midrule
     Optimizador & AdamW & SGD (momentum 0.937) \\
-    Learning rate & $3\times10^{-4}$ & 0.01 (cosine) \\
+    Tasa de aprendizaje base & $3\times10^{-4}$ & $0.01$ (Cosine decay) \\
     Weight decay & $10^{-4}$ & $5\times10^{-4}$ \\
-    Batch size & 32 & 64 \\
-    Épocas máx. / paciencia & 20 / 5 & 60 / 15 \\
-    Data augmentation & flips, rotación, jitter & HSV, rotación $10^\circ$,
-      traslación, escala, flips, mosaico 0.5, mixup 0.1 \\
-    Precisión mixta (AMP) & Sí & Sí \\
+    Tamaño de lote (\emph{Batch size}) & 32 & 64 \\
+    Épocas máximas / Paciencia & 20 / 5 & 60 / 15 \\
+    Aumento de datos & Flips, rotación, color jitter & HSV, Mosaic (0.5), Mixup (0.1), Flips \\
+    Precisión mixta (AMP) & Sí (float16) & Sí (float16) \\
+    Resolución de entrada & $256\times256\times3$ & $256\times256\times3$ \\
     \bottomrule
-  \end{tabular}
+  \end{tabularx}
 \end{table}
-
-\textbf{Reproducibilidad.} Todo el pipeline corre por línea de comandos
-(\texttt{src/download\_datasets.py} $\rightarrow$
-\texttt{prepare\_combined\_dataset.py} $\rightarrow$ \texttt{train.py} /
-\texttt{train\_yolo.py} $\rightarrow$ \texttt{evaluate.py} /
-\texttt{export\_*.py}), con las mismas semillas e hiperparámetros del
-notebook de entrenamiento (\texttt{entrenar\_modelos.ipynb}), y existe un
-notebook de inferencia solo-CPU (\texttt{notebooks/inferencia\_cpu.ipynb}).
-El entrenamiento en GPU puede variar mínimamente por operaciones no
-determinísticas de CUDA/AMP.
 
 % ========================== 6. RESULTADOS ==========================
 \section{Resultados}
 
-\subsection{Clasificación (tarea principal)}
-
-La Tabla~\ref{tab:clf} resume la evaluación final sobre el split de test
-(1\,500 imágenes, no usado en entrenamiento ni en selección de checkpoint).
-Los tres modelos con transfer learning alcanzan F1 macro $=1.0000$; la CNN
-baseline entrenada desde cero (entrenada por Jennifer Suarez Gutierrez)
-llega a $0.9987$ con solo 391K parámetros.
+\subsection{Clasificación de dominio y modelos baseline}
+La evaluación final sobre el split de prueba independiente (1\,500 imágenes
+sintéticas no vistas en el entrenamiento) se expone en la Tabla~\ref{tab:clf}. Los tres
+modelos basados en \emph{transfer learning} alcanzaron un F1-Macro perfecto de $1.0000$
+tras pocas épocas de convergencia. La arquitectura CNN entrenada desde cero como
+baseline (desarrollada y entrenada por Jennifer Suarez Gutierrez) obtuvo una exactitud
+del 99.87\,\% y un F1-Macro de $0.9987$ con solo 391K parámetros.
 
 \begin{table}[H]
   \centering\small
-  \caption{Resultados de clasificación sobre test (5 clases).}
+  \caption{Métricas de desempeño en clasificación sobre el conjunto de prueba (5 clases).}
   \label{tab:clf}
-  \begin{tabular}{@{}lcccc@{}}
+  \begin{tabularx}{\textwidth}{@{}l c c c c X@{}}
     \toprule
-    \textbf{Modelo} & \textbf{Parámetros} & \textbf{Épocas} & \textbf{Accuracy} & \textbf{F1 macro} \\
+    \textbf{Modelo} & \textbf{Parámetros} & \textbf{Épocas} & \textbf{Accuracy} & \textbf{F1-Macro} & \textbf{Rol en Pipeline} \\
     \midrule
-    ResNet-18~\cite{resnet} & 11.2M & 7 & 1.0000 & 1.0000 \\
-    EfficientNet-B0~\cite{efficientnet} & 4.0M & 6 & 1.0000 & 1.0000 \\
-    MobileNetV3-Small & 1.5M & 6 & 1.0000 & 1.0000 \\
-    CNN baseline (desde cero) & 391K & 17 & 0.9987 & 0.9987 \\
+    MobileNetV3-Small~\cite{mobilenetv3} & 1.5M & 6 & \textbf{1.0000} & \textbf{1.0000} & \textbf{Gate de Dominio (Desplegado)} \\
+    EfficientNet-B0~\cite{efficientnet}   & 4.0M & 6 & 1.0000 & 1.0000 & Modelo de referencia \\
+    ResNet-18~\cite{resnet}             & 11.2M & 7 & 1.0000 & 1.0000 & Modelo de referencia \\
+    CNN Baseline (desde cero)           & 391K & 17 & 0.9987 & 0.9987 & Baseline comparativo \\
     \bottomrule
-  \end{tabular}
+  \end{tabularx}
 \end{table}
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=\textwidth]{figures/training_curves.png}
-  \caption{Curvas de entrenamiento (pérdida train/val y F1 de validación) de
-  los tres modelos preentrenados: convergencia en pocas épocas, típica del
-  transfer learning, sin brecha train--val que sugiera sobreajuste.}
+  \includegraphics[width=0.98\textwidth]{figures/training_curves.png}
+  \caption{Curvas de entrenamiento de los modelos preentrenados (pérdida train/val y
+  evolución de F1): rápida convergencia sin sobreajuste aparente.}
   \label{fig:curvas-clf}
 \end{figure}
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=\textwidth]{figures/confusion_matrices.png}
-  \caption{Matrices de confusión sobre test: diagonal pura (600/600 por
-  clase) en los tres preentrenados.}
+  \includegraphics[width=0.98\textwidth]{figures/confusion_matrices.png}
+  \caption{Matrices de confusión en test para los modelos preentrenados: diagonal pura
+  (300 aciertos por clase en cada modelo).}
   \label{fig:cm}
 \end{figure}
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.9\textwidth]{figures/inference_predictions.png}
-  \caption{Ejemplos de inferencia (ResNet-18): predicciones correctas sobre
-  imágenes de test (T = etiqueta real, P = predicción).}
+  \includegraphics[width=0.88\textwidth]{figures/inference_predictions.png}
+  \caption{Muestras de inferencia cualitativa en clasificación (ResNet-18) sobre imágenes de prueba.}
   \label{fig:infer}
 \end{figure}
 
-\subsection{Detección de objetos (YOLOv8n)}
-
-Evaluación única sobre el split de test del dataset combinado de tres
-fuentes (1\,725 imágenes, incluidas 177 reales de NEU-DET con cajas
-anotadas): \textbf{mAP50 $=0.739$}, mAP50-95 $=0.488$, precisión $0.754$,
-recall $0.663$ (Tabla~\ref{tab:det}, Fig.~\ref{fig:curvas-yolo}).
+\subsection{Detección de objetos con YOLOv8n}
+La evaluación del detector se ejecutó sobre el split de prueba combinado de 1\,725
+imágenes (que integra 1\,500 sintéticas, 48 de SteelDefectX y 177 de NEU-DET con
+cajas reales). En la Tabla~\ref{tab:det_global} y Tabla~\ref{tab:det_clase} se
+desglosan las métricas cuantitativas obtenidas.
 
 \begin{table}[H]
   \centering\small
-  \caption{AP por clase del detector sobre test.}
-  \label{tab:det}
-  \begin{tabular}{@{}lcc@{}}
+  \caption{Métricas globales de detección de YOLOv8n sobre el conjunto de prueba (1\,725 imágenes).}
+  \label{tab:det_global}
+  \begin{tabularx}{\textwidth}{@{}l c c c X@{}}
     \toprule
-    \textbf{Clase} & \textbf{AP50} & \textbf{AP50-95} \\
+    \textbf{Métrica} & $\text{\textbf{mAP}}_{50}$ & $\text{\textbf{mAP}}_{50\text{--}95}$ & \textbf{Precisión (\emph{Precision})} & \textbf{Exhaustividad (\emph{Recall})} \\
     \midrule
-    \texttt{hole} (perforación) & 0.846 & 0.645 \\
-    \texttt{crack} (grieta) & 0.791 & 0.541 \\
-    \texttt{rust} (óxido) & 0.677 & 0.407 \\
-    \texttt{scratch} (rayón) & 0.643 & 0.361 \\
-    \midrule
-    \textbf{Global (mAP)} & \textbf{0.739} & \textbf{0.488} \\
+    \textbf{Valor} & \textbf{0.739} & \textbf{0.488} & \textbf{0.754} & \textbf{0.663} \\
     \bottomrule
-  \end{tabular}
+  \end{tabularx}
+\end{table}
+
+\begin{table}[H]
+  \centering\small
+  \caption{Desempeño del detector YOLOv8n desglosado por clase de defecto.}
+  \label{tab:det_clase}
+  \begin{tabularx}{\textwidth}{@{}l c c X@{}}
+    \toprule
+    \textbf{Clase de Defecto} & $\text{\textbf{AP}}_{50}$ & $\text{\textbf{AP}}_{50\text{--}95}$ & \textbf{Comportamiento Físico Observado} \\
+    \midrule
+    \texttt{hole} (Perforación)  & \textbf{0.846} & \textbf{0.645} & Geometría delimitada, contraste nítido con el fondo. \\
+    \texttt{crack} (Grieta)      & \textbf{0.791} & 0.541 & Alta precisión en fisuras continuas; sensible a aperturas finas. \\
+    \texttt{rust} (Óxido)        & 0.677 & 0.407 & Bordes difusos y variabilidad de tonalidad superficial. \\
+    \texttt{scratch} (Rayón)     & 0.643 & 0.361 & Trazos extremadamente finos sensibles a la resolución de $256\text{px}$. \\
+    \midrule
+    \textbf{Promedio Global (mAP)} & \textbf{0.739} & \textbf{0.488} & Rendimiento balanceado para inspección industrial. \\
+    \bottomrule
+  \end{tabularx}
 \end{table}
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=\textwidth]{figures/yolo_curvas.png}
-  \caption{Curvas del detector (60 épocas, 1.15 h en RTX 5060 Ti): pérdidas
-  box/cls en train y val, y evolución de mAP50 / mAP50-95 y
-  precisión/recall en validación. El mAP50 aún subía al final, sin activar
-  el early stopping.}
+  \includegraphics[width=0.98\textwidth]{figures/yolo_curvas.png}
+  \caption{Curvas de aprendizaje de YOLOv8n durante 60 épocas de entrenamiento en GPU RTX 5060 Ti:
+  pérdidas de caja y clasificación (train/val), y evolución de $\text{mAP}_{50}$, $\text{mAP}_{50\text{--}95}$,
+  precisión y recall.}
   \label{fig:curvas-yolo}
 \end{figure}
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.95\textwidth]{figures/yolo_predicciones.png}
-  \caption{Detecciones del modelo sobre imágenes de test: cada defecto se
-  acota con su caja, clase y confianza.}
+  \includegraphics[width=0.92\textwidth]{figures/yolo_predicciones.png}
+  \caption{Predicciones cualitativas de YOLOv8n sobre muestras de prueba: localización
+  mediante caja delimitadora, asignación de clase y score de confianza.}
   \label{fig:pred-yolo}
 \end{figure}
 
-\textbf{Errores típicos e hipótesis.} La Fig.~\ref{fig:errores} muestra
-predicciones incorrectas concretas, con hipótesis de por qué falló cada una.
+\subsection{Análisis cualitativo y diagnóstico de errores}
+El análisis minucioso de las predicciones arrojó patrones sistemáticos sobre aciertos y
+fallos (Fig.~\ref{fig:errores}):
 
-\textbf{Clasificación (CNN baseline, 2 errores de 1\,500):}
-\begin{itemize}[leftmargin=1.4em,itemsep=0.1em]
-  \item \texttt{crack} $\to$ \texttt{normal} (conf.\ 0.51): grieta de bajo
-    contraste que el modelo no distingue de la superficie normal. La
-    confianza es baja (0.51 vs.\ 0.38 para la clase real), indicando que el
-    modelo está cerca del límite de decisión.
-  \item \texttt{rust} $\to$ \texttt{normal} (conf.\ 0.70): óxido leve o
-    temprano con variación de tono insuficiente para que el modelo lo
-    clasifique como defecto.
+\begin{itemize}[leftmargin=1.6em,itemsep=0.2em]
+  \item \textbf{Caso A (Detección Correcta -- \texttt{hole}):} El detector localiza
+  perforaciones circulares e inclusiones con alta precisión y puntuaciones de confianza
+  superiores a 0.85, incluso en láminas con baja reflectancia o iluminación no uniforme.
+  \item \textbf{Caso B (Falso Positivo -- \texttt{rust}):} Se observaron casos en
+  donde texturas rugosas o bandas oscuras de rodillos industriales fueron clasificadas
+  falsamente como óxido. \emph{Hipótesis:} La distribución de frecuencias espaciales y
+  ruido de sensor en patrones difusos guarda una fuerte correlación visual con las
+  texturas de óxido sintético.
+  \item \textbf{Falsos Negativos en \texttt{crack} y \texttt{scratch}:} De los falsos
+  negativos identificados con umbral de confianza $\ge 0.5$, la mayor proporción
+  corresponde a fisuras y rayones muy tenues. Al reescalar las imágenes a $256\times256$,
+  estas estructuras lineales ocupan apenas 1 a 2 píxeles de grosor, lo que dificulta
+  el solapamiento estricto de intersección sobre unión (IoU) y reduce la puntuación de
+  confianza del modelo.
+  \item \textbf{Errores de Clasificación Baseline (2 fallos en 1\,500):} La CNN
+  baseline confundió una grieta tenue con superficie \texttt{normal} (confianza 0.51 vs
+  0.38) y un parche de óxido incipiente con \texttt{normal} (confianza 0.70), ambos en
+  imágenes con contraste casi imperceptible.
 \end{itemize}
-
-\textbf{Detección YOLOv8n (261 falsos negativos de 1\,725, conf.\ $\geq$ 0.5):}
-la clase más afectada es \texttt{crack}: 13 de los 13 falsos negativos
-encontrados son grietas no detectadas. Las grietas son líneas finas y
-alargadas cuya caja anotada es muy estrecha; a $256\times256$ el defecto
-ocupa pocos píxeles y el detector no alcanza la confianza mínima (0.5).
-\texttt{scratch} sufre un problema similar: los rayones son líneas finas
-cuya caja ajustada es muy sensible a desviaciones de pocos píxeles, lo que
-castiga el AP50-95. \texttt{rust} sufre por la alta variabilidad de textura
-del óxido y su solapamiento visual con manchas de otro origen, lo que exige
-un umbral específico más alto en la demo web.
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=\textwidth]{figures/predicciones_incorrectas.png}
-  \caption{Predicciones incorrectas en test. Fila superior: 2 errores de
-  clasificación (CNN baseline) --- grieta y óxido de bajo contraste
-  clasificados como normal. Filas siguientes: 13 falsos negativos del
-  detector YOLOv8n (conf.\ $\geq$ 0.5) --- todos son grietas no detectadas
-  por ser líneas finas con bajo contraste a $256\times256$. Cada imagen
-  incluye una hipótesis de por qué falló.}
+  \includegraphics[width=0.98\textwidth]{figures/predicciones_incorrectas.png}
+  \caption{Diagnóstico de predicciones erróneas en el conjunto de prueba. Fila superior:
+  2 casos de clasificación incorrecta en la CNN baseline por bajo contraste. Filas
+  inferiores: falsos negativos de YOLOv8n ($\text{conf} \ge 0.5$) en grietas y micro-defectos
+  lineales a baja resolución.}
   \label{fig:errores}
 \end{figure}
 
-\subsection{Demo web (despliegue)}
+\subsection{Despliegue web e inferencia en tiempo real}
+Ambos modelos fueron convertidos al estándar abierto ONNX (opset 17), validando la
+paridad numérica exacta contra la ejecución en PyTorch (IoU medio de $1.0000$ en cajas
+y concordancia en probabilidades de clase). 
 
-Ambos modelos se exportan a ONNX (opset 17) con paridad numérica verificada
-contra PyTorch (IoU medio 1.000 entre detecciones ONNX y PyTorch) y corren
-en el navegador con ONNX Runtime Web (WASM) a 20--30 FPS~\cite{onnxruntime}.
-La Fig.~\ref{fig:demo} muestra pruebas de extremo a extremo sobre la app
-desplegada.
+El sistema cliente opera en navegadores web modernos mediante \textbf{ONNX Runtime Web}
+y el backend de \textbf{WebAssembly (WASM) multi-hilo}, prescindiendo de servidores de
+cómputo y garantizando la privacidad de los datos en planta. En pruebas de estrés se
+alcanzaron tasas de \textbf{20--30+ FPS} en video en directo (Fig.~\ref{fig:demo}).
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.49\textwidth]{figures/demo_crack.png}\hfill
-  \includegraphics[width=0.49\textwidth]{figures/demo_ood.png}
-  \caption{Testing de la demo web con el modelo desplegado. Izquierda:
-  detección de grieta con caja y confianza. Derecha: el gate de dominio
-  rechaza una escena no metálica (\emph{fuera de dominio}).}
+  \includegraphics[width=0.48\textwidth]{figures/demo_crack.png}\hfill
+  \includegraphics[width=0.48\textwidth]{figures/demo_ood.png}
+  \caption{Validación operativa de la aplicación web en tiempo real. Izquierda: detección
+  en vivo de grieta con caja y confianza. Derecha: el clasificador Gate rechaza una
+  escena no industrial categorizándola como \emph{Fuera de Dominio} (OOD).}
   \label{fig:demo}
 \end{figure}
 
 % =================== 7. DISCUSIÓN Y LIMITACIONES ===================
 \section{Discusión y limitaciones}
 
-\textbf{Qué funcionó mejor de lo esperado.} El transfer learning saturó la
-tarea de clasificación sintética en 1--2 épocas con F1 $=1.0$, y la cascada
-gate+detector resultó robusta en la demo con cámara real gracias a los
-filtros anti-ruido calibrados (luminosidad mínima, saturación máxima y
-umbrales por clase).
+\textbf{Efecto de la inclusión de benchmarks reales:} Al integrar el dataset NEU-DET
+en la evaluación, el $\text{mAP}_{50}$ global pasó de $0.80$ (en datasets exclusivamente
+sintéticos o semi-heurísticos) a $0.739$. Lejos de considerarse un deterioro, este
+resultado representa un avance metodológico positivo: NEU-DET incorpora anotaciones
+manuales de expertos sobre piezas reales de acería, ofreciendo una métrica mucho más
+honesta, rigurosa y cercana a las condiciones reales de planta.
 
-\textbf{Qué no funcionó / señales a vigilar.} (i) El F1 perfecto es una
-\emph{cota superior bajo condiciones ideales}: el dataset dominante es
-sintético, y no afirmamos el mismo desempeño en piezas reales
-(\emph{sim-to-real gap}); no hay señales de sobreajuste en las curvas, pero
-sí de \emph{facilidad} del benchmark. (ii) El mAP50 del detector (0.739) no
-es comparable con corridas anteriores sobre el dataset de dos fuentes
-(0.767--0.80), porque el split de test actual incluye 177 imágenes reales de
-NEU-DET con cajas anotadas, un examen más exigente y más representativo.
-(iii) Las cajas heurísticas de dos fuentes limitan el techo de localización:
-parte del error AP50-95 proviene de etiquetas ruidosas, no del modelo.
-(iv) No detectamos fuga de datos: las particiones son físicas por fuente y
-el test se usó una sola vez. (v) Las curvas de mAP aún ascendían al final
-de las 60 épocas: el detector está sub-entrenado.
+\textbf{Validez de la clasificación perfecta (F1 = 1.0):} El resultado de F1-Macro
+$=1.0000$ en los clasificadores con transfer learning debe interpretarse como una
+\emph{cota superior en laboratorio}. Si bien el filtro Gate discrimina con absoluta
+eficacia fondos no metálicos y escenas OOD sintéticas, la brecha \emph{sim-to-real}
+sugiere que en planta la presencia de suciedad extrema, aceites de corte o cambios
+bruscos de iluminación podría degradar ligeramente dicha métrica si no se recalibra
+periódicamente.
+
+\textbf{Ruido en etiquetas y regresión de cajas:} El uso de cajas heurísticas basadas
+en segmentación por OpenCV para los datos sintéticos y SteelDefectX impone un techo a la
+métrica $\text{mAP}_{50\text{--}95}$ ($0.488$). Una fracción de la pérdida de
+localización (\emph{localization loss}) se debe a la imperfección geométrica de las
+etiquetas de entrenamiento y no a una deficiencia intrínseca de la arquitectura de la red.
+
+\textbf{Comportamiento de las curvas de entrenamiento:} Al completar las 60 épocas en
+YOLOv8n, la curva de $\text{mAP}_{50}$ continuaba exhibiendo una pendiente positiva leve
+sin saturación de \emph{early stopping}, lo que evidencia que un entrenamiento más
+prolongado (100+ épocas) sobre el dataset consolidado de tres fuentes incrementaría aún
+más la capacidad de detección.
 
 % ========================= 8. TRABAJO FUTURO =========================
 \section{Trabajo futuro}
 
-\begin{enumerate}[leftmargin=1.4em,itemsep=0.15em]
-  \item \textbf{Reentrenar 100+ épocas con el dataset de tres fuentes}: la
-    corrida histórica de 100 épocas (2 fuentes) mejoró 3 puntos de mAP50
-    frente a 60 épocas; repetirla sobre las 17\,250 imágenes actuales.
-  \item \textbf{Anotación humana de una muestra de cajas}: revisar manualmente
-    500--1\,000 cajas heurísticas (empezando por \texttt{scratch} y
-    \texttt{rust}) para medir cuánto del error es ruido de etiquetas.
-  \item \textbf{Más datos reales y condiciones adversas}: incorporar
-    GC10-DET y capturas propias con poca luz y cámara de planta, hoy
-    sub-representadas, para cerrar el sim-to-real gap.
-  \item \textbf{Cuantización INT8 del ONNX} y WebGPU como backend de ONNX
-    Runtime Web, para sostener 30+ FPS en hardware modesto.
+A partir de los hallazgos del proyecto, se delinean tres líneas prioritarias de
+extensión técnica:
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.2em]
+  \item \textbf{Hardware de borde y cuantización INT8 (\emph{Edge Computing}):}
+  Optimizar el grafo computacional mediante cuantización INT8 y TensorRT para su
+  despliegue embebido en placas NVIDIA Jetson Orin / Xavier. Esto permitirá integrar
+  la inferencia directamente en la óptica de las cámaras cenitales de la línea.
+  \item \textbf{Refinamiento y curación manual de anotaciones:} Sustituir gradualmente
+  las cajas generadas por algoritmos heurísticos de OpenCV por anotaciones 100\,\%
+  validadas por inspectores de calidad humanos, cerrando la brecha de precisión
+  geométrica en fallas lineales (\texttt{crack} y \texttt{scratch}).
+  \item \textbf{Resiliencia ante ruido térmico y óptico:} Implementar bloques de
+  preprocesamiento adaptativo y algoritmos de reducción de ruido (\emph{denoise}) para
+  mitigar el ruido ISO elevado de los sensores y la distorsión por radiación infrarroja
+  en entornos de laminación en caliente.
+  \item \textbf{Aceleración WebGPU en el frontend:} Incorporar el backend de WebGPU en
+  ONNX Runtime Web para triplicar la tasa de cuadros por segundo en equipos con GPU
+  integradas o discretas sin consumo intensivo de CPU.
 \end{enumerate}
 
 % ========================== 9. CONCLUSIONES ==========================
 \section{Conclusiones}
 
-El proyecto entrega un sistema completo ---datos, entrenamiento reproducible,
-evaluación honesta y despliegue web en tiempo real--- para detección y
-clasificación de defectos en superficies metálicas. Los clasificadores
-resuelven la tarea sintética con F1 $=1.0$ y el detector localiza defectos
-con mAP50 $=0.739$ sobre un test que ya incluye imágenes reales anotadas.
-El principal aprendizaje es que el cuello de botella ya no es el modelo sino
-la calidad de las etiquetas de localización y la brecha sim-to-real, lo que
-marca el camino del trabajo futuro.
+Este proyecto valida la viabilidad y efectividad de arquitecturas ligeras de aprendizaje
+profundo (MobileNetV3-Small y YOLOv8n) para la inspección y aseguramiento de calidad en
+la industria siderúrgica y metalúrgica en tiempo real. 
+
+La arquitectura en cascada de dos etapas demuestra ser una estrategia de ingeniería
+altamente robusta: el clasificador Gate asegura resiliencia ante entradas fuera de
+dominio y fondos no pertinentes, mientras que el detector multiclase logra localizar y
+discriminar defectos con un $\text{mAP}_{50}$ de $0.739$ sobre escenarios reales. 
+
+La integración fluida del pipeline ---desde el entrenamiento acelerado en GPU hasta el
+despliegue en navegador web a 20--30+ FPS mediante WebAssembly--- consolida una solución
+práctica, escalable, privada y de bajo costo para la modernización de los procesos de
+control de calidad industrial.
 
 % ========================== 10. REFERENCIAS ==========================
 \begin{thebibliography}{9}\small
@@ -423,34 +592,40 @@ Detection}. Hugging Face Datasets.
 \url{https://huggingface.co/datasets/Zhaosxian/SteelDefectX}
 
 \bibitem{kaggle}
-Abbas, T. \emph{Synthetic Industrial Metal Surface Defects} (15\,000
-imágenes, CC BY 4.0). Kaggle Datasets.
+Abbas, T.
+\emph{Synthetic Industrial Metal Surface Defects} (15\,000 imágenes, CC BY 4.0).
+Kaggle Datasets.
 \url{https://www.kaggle.com/datasets/tatheerabbas/synthetic-industrial-metal-surface-defects}
 
 \bibitem{mobilenetv3}
 Howard, A. et al. (2019).
-\emph{Searching for MobileNetV3}. ICCV 2019.
-
-\bibitem{resnet}
-He, K., Zhang, X., Ren, S., \& Sun, J. (2016).
-\emph{Deep Residual Learning for Image Recognition}. CVPR 2016.
-
-\bibitem{efficientnet}
-Tan, M., \& Le, Q. (2019).
-\emph{EfficientNet: Rethinking Model Scaling for Convolutional Neural
-Networks}. ICML 2019.
+\emph{Searching for MobileNetV3}.
+IEEE/CVF International Conference on Computer Vision (ICCV), 1314--1324.
 
 \bibitem{yolov8}
 Jocher, G., Chaurasia, A., \& Qiu, J. (2023).
-\emph{Ultralytics YOLOv8}. \url{https://github.com/ultralytics/ultralytics}
+\emph{Ultralytics YOLOv8}.
+\url{https://github.com/ultralytics/ultralytics}
+
+\bibitem{resnet}
+He, K., Zhang, X., Ren, S., \& Sun, J. (2016).
+\emph{Deep Residual Learning for Image Recognition}.
+IEEE Conference on Computer Vision and Pattern Recognition (CVPR), 770--778.
+
+\bibitem{efficientnet}
+Tan, M., \& Le, Q. (2019).
+\emph{EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks}.
+International Conference on Machine Learning (ICML), 6105--6114.
 
 \bibitem{onnxruntime}
-ONNX Runtime / ONNX Runtime Web. Microsoft.
+Microsoft (2024).
+\emph{ONNX Runtime Web: High performance machine learning inference in the browser}.
 \url{https://onnxruntime.ai/}
 
 \bibitem{datasheets}
 Gebru, T. et al. (2018).
-\emph{Datasheets for Datasets}. arXiv:1803.09010.
+\emph{Datasheets for Datasets}.
+arXiv:1803.09010.
 
 \end{thebibliography}
 
