@@ -32,6 +32,7 @@ from ultralytics import YOLO
 ROOT = Path(__file__).resolve().parent.parent
 DATA_YAML = ROOT / "yolo_dataset" / "defects.yaml"
 PROJECT = ROOT / "outputs" / "yolo"
+BASE_WEIGHTS = PROJECT / "yolov8n.pt"  # pretrained COCO, en outputs/ (rúbrica)
 
 
 def parse_args():
@@ -42,7 +43,7 @@ def parse_args():
   )
   parser.add_argument("--datos", default=str(DATA_YAML),
                       help="Ruta al defects.yaml del dataset YOLO")
-  parser.add_argument("--modelo-base", default="yolov8n.pt",
+  parser.add_argument("--modelo-base", default=str(BASE_WEIGHTS),
                       help="Checkpoint de partida (pretrained COCO)")
   parser.add_argument("--epochs", type=int, default=60)
   parser.add_argument("--batch", type=int, default=64)
