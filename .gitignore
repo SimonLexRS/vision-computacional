@@ -20,10 +20,13 @@ AGENTS.md
 yolo_dataset/
 external_datasets/
 # Pesos pretrained que descarga ultralytics al entrenar
-/*.pt
+#/*.pt
 # Artefactos de evaluación de ultralytics fuera de outputs/
 /runs/
 remotion.config.ts
 /presentacion-video
 # Dataset sintetico de Kaggle (descargable con src/download_synthetic_dataset.py)
 industrial_defect_dataset/
+/Estudio
+Estudio/
+CLAUDE.md
