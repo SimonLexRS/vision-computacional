@@ -28,7 +28,7 @@ Proyecto integral de detección de objetos y clasificación multi-clase de defec
 
 El notebook `notebooks/inferencia_cpu.ipynb` permite reproducir la inferencia utilizando los pesos del modelo previamente entrenado, ejecutándose únicamente en CPU y sin necesidad de volver a entrenar el modelo.
 
-🎥 **Video de demostración:** https://drive.google.com/file/d/1eyhkJLUD9eOH8Aweqzbt3xsCX8OSrcK4/view?usp=drive_link 
+🎥 **Video de demostración:** https://drive.google.com/file/d/1O94ky6UKPWkSiXQzo2UVIzXWf3W3IRCk/view?usp=sharing 
 
 ## Datasets, Fuentes y Créditos Académicos
 
