@@ -1,0 +1,5 @@
+model,accuracy,f1_macro,f1_weighted
+resnet18,1.0,1.0,1.0
+efficientnet_b0,1.0,1.0,1.0
+mobilenet_v3_small,1.0,1.0,1.0
+cnn_baseline,0.9986666666666667,0.9986677685400362,0.9986677685400362

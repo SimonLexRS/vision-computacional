@@ -1,0 +1,4 @@
+model,params,epochs_run,minutes,accuracy,f1_macro,f1_weighted,val_loss,checkpoint
+resnet18,11179077,6,4.95,1.0,1.0,1.0,0.00010139158110541757,G:\Maestria\Modulo 9\Proyecto Final\outputs\checkpoints\resnet18_best.pt
+efficientnet_b0,4013953,6,7.72,1.0,1.0,1.0,3.8020859951454134e-05,G:\Maestria\Modulo 9\Proyecto Final\outputs\checkpoints\efficientnet_b0_best.pt
+mobilenet_v3_small,1522981,7,6.19,1.0,1.0,1.0,0.0008937479927172826,G:\Maestria\Modulo 9\Proyecto Final\outputs\checkpoints\mobilenet_v3_small_best.pt

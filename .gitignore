@@ -9,7 +9,7 @@ Thumbs.db
 .idea/
 .vscode/
 *.log
-outputs/
+#outputs/
 .ipynb_checkpoints/
 # docs/figures/ se versiona (gráficos del README)
 .venv-1/
@@ -27,3 +27,19 @@ remotion.config.ts
 /presentacion-video
 # Dataset sintetico de Kaggle (descargable con src/download_synthetic_dataset.py)
 industrial_defect_dataset/
+/Estudio
+CLAUDE.md
+# Artefactos no esenciales de outputs/ (runs históricos, backups, debug)
+outputs/yolo/train-2/
+outputs/yolo/train-3/
+outputs/yolo/detector_train3_backup.onnx
+outputs/_pdf_check/
+outputs/_demo_shots.py
+outputs/_run_notebook.py
+outputs/_update_nb_yolo.py
+outputs/pr16_body.md
+outputs/_ood_test.png
+outputs/edges_selftest*.png
+outputs/web_e2e_*.png
+outputs/web_fix_*.png
+outputs/web_smoke_*.png
