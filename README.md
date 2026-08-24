@@ -24,7 +24,11 @@
 
 Proyecto integral de detección de objetos y clasificación multi-clase de defectos industriales en metal: combina un **Gate clasificador de dominio** (MobileNetV3-Small) y un **detector YOLOv8n en tiempo real** entrenados con aceleración por hardware (**GPU NVIDIA GeForce RTX 5060 Ti**) sobre datasets combinados sintéticos y reales.
 
----
+### Demostración de inferencia en CPU
+
+El notebook `notebooks/inferencia_cpu.ipynb` permite reproducir la inferencia utilizando los pesos del modelo previamente entrenado, ejecutándose únicamente en CPU y sin necesidad de volver a entrenar el modelo.
+
+🎥 **Video de demostración:** https://drive.google.com/file/d/1eyhkJLUD9eOH8Aweqzbt3xsCX8OSrcK4/view?usp=drive_link 
 
 ## Datasets, Fuentes y Créditos Académicos
 
