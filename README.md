@@ -20,6 +20,8 @@
 | **Daniel Ribera Añez** | Contribuidor |
 | **Daniela Alejandra Caro Arrazola** | Contribuidora |
 
+**Docente:** Ing. Msc. Erick Maraz
+
 **Informe técnico (artículo científico, Entregable A):** [`informe/main.pdf`](informe/main.pdf) — fuente LaTeX en [`informe/main.tex`](informe/main.tex).
 
 Proyecto integral de detección de objetos y clasificación multi-clase de defectos industriales en metal: combina un **Gate clasificador de dominio** (MobileNetV3-Small) y un **detector YOLOv8n en tiempo real** entrenados con aceleración por hardware (**GPU NVIDIA GeForce RTX 5060 Ti**) sobre datasets combinados sintéticos y reales.
