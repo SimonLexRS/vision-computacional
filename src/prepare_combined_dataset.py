@@ -322,8 +322,7 @@ def main():
           "corre python src/download_datasets.py para incluir NEU-DET.")
 
   # 4. Guardar YAML de configuración para YOLOv8
-  yaml_content = f"""path: {OUT_DIR.as_posix()}
-train: train/images
+  yaml_content = f"""train: train/images
 val: val/images
 test: test/images
 
